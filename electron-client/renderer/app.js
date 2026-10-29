@@ -82,12 +82,167 @@ const state = {
   // Pending attachments for current message
   pendingAttachments: [],
   // Modal navigation - track previous modal for back button
-  previousModal: null
+  previousModal: null,
+  // Direct Messages (End-to-End Encrypted)
+  dmConversations: [], // List of DM conversations
+  currentDMUser: null, // Currently selected DM user
+  dmMessages: [], // Messages in current DM conversation
+  cryptoKeys: null, // { publicKey, privateKey } for E2E encryption
+  publicKeyCache: {} // Cache of other users' public keys
 };
+
+// ==================== E2E Encryption Utilities ====================
+
+// Generate RSA key pair for E2E encryption
+async function generateKeyPair() {
+  const keyPair = await window.crypto.subtle.generateKey(
+    {
+      name: 'RSA-OAEP',
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: 'SHA-256'
+    },
+    true,
+    ['encrypt', 'decrypt']
+  );
+  return keyPair;
+}
+
+// Export public key to JWK format for storage/sharing
+async function exportPublicKey(publicKey) {
+  return JSON.stringify(await window.crypto.subtle.exportKey('jwk', publicKey));
+}
+
+// Import public key from JWK string
+async function importPublicKey(jwkString) {
+  const jwk = JSON.parse(jwkString);
+  return window.crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    true,
+    ['encrypt']
+  );
+}
+
+// Export private key to JWK for local storage
+async function exportPrivateKey(privateKey) {
+  return JSON.stringify(await window.crypto.subtle.exportKey('jwk', privateKey));
+}
+
+// Import private key from JWK
+async function importPrivateKey(jwkString) {
+  const jwk = JSON.parse(jwkString);
+  return window.crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    true,
+    ['decrypt']
+  );
+}
+
+// Generate AES key for message encryption
+async function generateAESKey() {
+  return window.crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  );
+}
+
+// Encrypt message with AES
+async function encryptMessage(message, aesKey) {
+  const encoder = new TextEncoder();
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await window.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    aesKey,
+    encoder.encode(message)
+  );
+  return {
+    encryptedContent: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
+    iv: btoa(String.fromCharCode(...iv))
+  };
+}
+
+// Decrypt message with AES
+async function decryptMessage(encryptedContent, iv, aesKey) {
+  const decoder = new TextDecoder();
+  const encryptedBytes = Uint8Array.from(atob(encryptedContent), c => c.charCodeAt(0));
+  const ivBytes = Uint8Array.from(atob(iv), c => c.charCodeAt(0));
+  const decrypted = await window.crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: ivBytes },
+    aesKey,
+    encryptedBytes
+  );
+  return decoder.decode(decrypted);
+}
+
+// Encrypt AES key with recipient's public key
+async function encryptAESKey(aesKey, recipientPublicKey) {
+  const exportedKey = await window.crypto.subtle.exportKey('raw', aesKey);
+  const encrypted = await window.crypto.subtle.encrypt(
+    { name: 'RSA-OAEP' },
+    recipientPublicKey,
+    exportedKey
+  );
+  return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+}
+
+// Decrypt AES key with our private key
+async function decryptAESKey(encryptedKey, privateKey) {
+  const encryptedBytes = Uint8Array.from(atob(encryptedKey), c => c.charCodeAt(0));
+  const decrypted = await window.crypto.subtle.decrypt(
+    { name: 'RSA-OAEP' },
+    privateKey,
+    encryptedBytes
+  );
+  return window.crypto.subtle.importKey(
+    'raw',
+    decrypted,
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['decrypt']
+  );
+}
+
+// Initialize or load encryption keys
+async function initializeCryptoKeys() {
+  const storedPrivateKey = localStorage.getItem('dm_private_key');
+  const storedPublicKey = localStorage.getItem('dm_public_key');
+
+  if (storedPrivateKey && storedPublicKey) {
+    try {
+      state.cryptoKeys = {
+        privateKey: await importPrivateKey(storedPrivateKey),
+        publicKey: await importPublicKey(storedPublicKey)
+      };
+      return;
+    } catch (e) {
+      console.warn('Failed to load stored keys, generating new ones');
+    }
+  }
+
+  // Generate new key pair
+  const keyPair = await generateKeyPair();
+  state.cryptoKeys = keyPair;
+
+  // Store locally
+  localStorage.setItem('dm_private_key', await exportPrivateKey(keyPair.privateKey));
+  localStorage.setItem('dm_public_key', await exportPublicKey(keyPair.publicKey));
+
+  // Upload public key to server
+  if (state.socket) {
+    const publicKeyJwk = await exportPublicKey(keyPair.publicKey);
+    state.socket.emit('dm:setPublicKey', { publicKey: publicKeyJwk });
+  }
+}
 
 // Initialize application
 async function init() {
-  // Load settings from electron store
+  // Web client uses relative URLs (nginx proxies to backend)
+  // For Electron, load settings from electron store
   if (window.electronAPI) {
     state.settings = await window.electronAPI.getSettings();
     state.serverUrl = state.settings.serverUrl;
@@ -100,204 +255,181 @@ async function init() {
 
     // Set up IPC listeners
     setupIPCListeners();
-  }
 
-  // If we have saved servers, try to auto-connect to the first one
-  if (state.servers.length > 0) {
-    const firstServer = state.servers[0];
-    state.serverUrl = firstServer.url;
-    state.token = firstServer.token;
-    state.currentServerId = firstServer.id;
-    document.getElementById('serverUrl').value = firstServer.url;
-    tryAutoLogin();
-  } else if (state.token && state.serverUrl) {
-    // Legacy single server support
+    // If we have saved servers, try to auto-connect to the first one
+    if (state.servers.length > 0) {
+      const firstServer = state.servers[0];
+      state.serverUrl = firstServer.url;
+      state.token = firstServer.token;
+      state.currentServerId = firstServer.id;
+      document.getElementById('serverUrl').value = firstServer.url;
+      tryAutoLogin();
+    } else if (state.token && state.serverUrl) {
+      // Legacy single server support
+      document.getElementById('serverUrl').value = state.serverUrl;
+      tryAutoLogin();
+    }
+  } else {
+    // Web client - detect if running on different port than API
+    // In development, client is on 3000, API is on 3001
+    if (window.location.port === '3000') {
+      state.serverUrl = `${window.location.protocol}//${window.location.hostname}:3001`;
+    } else {
+      // Production or same-origin: use relative URLs
+      state.serverUrl = '';
+    }
     document.getElementById('serverUrl').value = state.serverUrl;
-    tryAutoLogin();
+
+    // Try to resume a saved web session. If a Google OAuth callback is in the URL
+    // (?googleAuth=success&token=...), let setupGoogleAuth() handle that instead — it
+    // runs after this and will overwrite state.token with the fresh one from the callback.
+    const callbackParams = new URLSearchParams(window.location.search);
+    const isGoogleCallback = callbackParams.get('googleAuth') === 'success';
+    if (!isGoogleCallback) {
+      const saved = loadWebSession();
+      if (saved.token) {
+        state.token = saved.token;
+        if (saved.serverUrl) state.serverUrl = saved.serverUrl;
+        tryAutoLogin();
+      }
+    }
   }
 
   // Set up form handler
   document.getElementById('connectionForm').addEventListener('submit', handleConnect);
 
-  // Set up Google sign-in button
-  document.getElementById('googleSignInBtn').addEventListener('click', handleGoogleSignIn);
+  // Set up Google OAuth (shows button if server has it enabled, handles callback)
+  setupGoogleAuth();
 
-  // Check for Google OAuth callback
-  checkGoogleAuthCallback();
-
-  // Check if server URL is entered, then check Google auth status
-  document.getElementById('serverUrl').addEventListener('change', checkGoogleAuthStatus);
-  document.getElementById('serverUrl').addEventListener('blur', checkGoogleAuthStatus);
+  // Populate the Ember login extras (server address display + recent servers)
+  renderLoginExtras();
 
   // Set up in-window PTT keyboard handling
   // PTT only works when window is focused (safer than global hotkeys)
   setupPTTKeyboard();
 }
 
-// Check if Google auth is enabled on the server
-async function checkGoogleAuthStatus() {
-  const serverUrl = document.getElementById('serverUrl').value.trim();
-  const googleBtn = document.getElementById('googleSignInBtn');
-  const divider = document.getElementById('oauthDivider');
-
-  if (!serverUrl) {
-    googleBtn.style.display = 'none';
-    divider.style.display = 'none';
-    return;
-  }
-
-  try {
-    const response = await fetch(`${serverUrl}/api/auth/google/status`);
-    if (response.ok) {
-      const data = await response.json();
-      if (data.enabled) {
-        googleBtn.style.display = 'flex';
-        divider.style.display = 'flex';
-      } else {
-        googleBtn.style.display = 'none';
-        divider.style.display = 'none';
-      }
-    } else {
-      googleBtn.style.display = 'none';
-      divider.style.display = 'none';
-    }
-  } catch (error) {
-    // Server not reachable or Google auth not available
-    googleBtn.style.display = 'none';
-    divider.style.display = 'none';
-  }
-}
-
-// Handle Google sign-in button click
-async function handleGoogleSignIn() {
-  const serverUrl = document.getElementById('serverUrl').value.trim();
-  if (!serverUrl) {
-    showError('Please enter a server address first');
-    return;
-  }
-
-  try {
-    // Get the Google auth URL from the server
-    const response = await fetch(`${serverUrl}/api/auth/google?baseUrl=${encodeURIComponent(serverUrl)}`);
-    if (!response.ok) {
-      const error = await response.json();
-      showError(error.error || 'Failed to start Google sign-in');
-      return;
-    }
-
-    const data = await response.json();
-
-    // Store the server URL for the callback
-    if (window.electronAPI) {
-      await window.electronAPI.saveSettings({ pendingGoogleAuthServer: serverUrl });
-    } else {
-      sessionStorage.setItem('pendingGoogleAuthServer', serverUrl);
-    }
-
-    // Open Google auth in system browser (Electron) or redirect (web)
-    if (window.electronAPI && window.electronAPI.openExternal) {
-      // Add callback URL that the server can use
-      const authUrl = data.url + '&state=' + encodeURIComponent(serverUrl);
-      window.electronAPI.openExternal(authUrl);
-    } else {
-      // Web fallback - redirect directly
-      window.location.href = data.url;
-    }
-  } catch (error) {
-    console.error('Google sign-in error:', error);
-    showError('Failed to start Google sign-in');
-  }
-}
-
-// Check for Google OAuth callback (when returning from Google)
-async function checkGoogleAuthCallback() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const googleAuth = urlParams.get('googleAuth');
-  const token = urlParams.get('token');
-
-  if (googleAuth === 'success' && token) {
-    // Clear the URL parameters
+// Set up Google OAuth: handle callback redirect, show button if enabled, wire click handler
+async function setupGoogleAuth() {
+  // If we just came back from Google's callback, the server redirected with ?googleAuth=success&token=...
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('googleAuth') === 'success' && params.get('token')) {
+    const token = params.get('token');
+    // Clean the URL so a refresh doesn't replay the token
     window.history.replaceState({}, document.title, window.location.pathname);
 
-    // Get the server URL from storage
-    let serverUrl;
-    if (window.electronAPI) {
-      const settings = await window.electronAPI.getSettings();
-      serverUrl = settings.pendingGoogleAuthServer;
-    } else {
-      serverUrl = sessionStorage.getItem('pendingGoogleAuthServer');
+    state.token = token;
+    try {
+      const meRes = await fetch(`${state.serverUrl}/api/auth/me`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (meRes.ok) {
+        const data = await meRes.json();
+        state.user = data.user;
+        if (window.electronAPI) {
+          await window.electronAPI.saveToken(token);
+        } else {
+          // Google sign-in always persists on the web — the user already opted in by
+          // clicking the button, and re-doing the full OAuth dance on every reload
+          // is worse UX than the implicit "remember me" the username/password form has.
+          saveWebSession(token, state.serverUrl);
+        }
+        showMainApp();
+        connectSocket();
+        return;
+      }
+    } catch (err) {
+      console.error('Google auth: failed to fetch user after callback', err);
     }
-
-    if (serverUrl) {
-      // Complete the login with the token
-      await completeGoogleLogin(serverUrl, token);
-    }
+    // Fall through to login screen if /auth/me failed
+    state.token = null;
+    const errorEl = document.getElementById('errorMessage');
+    if (errorEl) errorEl.textContent = 'Google sign-in completed but session is invalid. Try again.';
+  } else if (params.get('googleAuth') === 'error') {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    const errorEl = document.getElementById('errorMessage');
+    if (errorEl) errorEl.textContent = 'Google sign-in failed.';
   }
-}
 
-// Complete Google login with the received token
-async function completeGoogleLogin(serverUrl, token) {
+  // Ask server whether Google OAuth is configured. If yes, reveal the button.
   try {
-    // Verify the token and get user info
-    const response = await fetch(`${serverUrl}/api/auth/me`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
+    const statusRes = await fetch(`${state.serverUrl}/api/auth/google/status`);
+    if (!statusRes.ok) return;
+    const status = await statusRes.json();
+    if (!status.enabled) return;
+
+    const section = document.getElementById('googleAuthSection');
+    const btn = document.getElementById('googleSignInBtn');
+    if (!section || !btn) return;
+    section.style.display = '';
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const errorEl = document.getElementById('errorMessage');
+      if (errorEl) errorEl.textContent = '';
+      try {
+        // Pass baseUrl explicitly — behind Cloudflare Tunnel the server sees http://, not https://,
+        // so the callback URL it builds wouldn't match Google's registered redirect URI without this.
+        const origin = window.location.origin;
+        const urlRes = await fetch(
+          `${state.serverUrl}/api/auth/google?baseUrl=${encodeURIComponent(origin)}`
+        );
+        if (!urlRes.ok) throw new Error('Failed to start Google sign-in');
+        const { url } = await urlRes.json();
+        window.location.href = url;
+      } catch (err) {
+        console.error('Google sign-in failed to start', err);
+        if (errorEl) errorEl.textContent = err.message || 'Google sign-in failed.';
+        btn.disabled = false;
       }
     });
-
-    if (!response.ok) {
-      showError('Failed to verify Google login');
-      return;
-    }
-
-    const data = await response.json();
-
-    // Store credentials
-    state.serverUrl = serverUrl;
-    state.token = token;
-    state.user = data.user;
-
-    // Save to electron store if available
-    if (window.electronAPI) {
-      const serverId = generateServerId(serverUrl);
-      const newServer = {
-        id: serverId,
-        url: serverUrl,
-        token: token,
-        username: data.user.username,
-        name: new URL(serverUrl).hostname
-      };
-
-      // Add or update server in list
-      const existingIndex = state.servers.findIndex(s => s.url === serverUrl);
-      if (existingIndex >= 0) {
-        state.servers[existingIndex] = newServer;
-      } else {
-        state.servers.push(newServer);
-      }
-
-      state.currentServerId = serverId;
-
-      await window.electronAPI.saveSettings({
-        serverUrl,
-        token,
-        servers: state.servers,
-        pendingGoogleAuthServer: null
-      });
-    }
-
-    // Connect to server
-    connectSocket();
-    showMainApp();
-  } catch (error) {
-    console.error('Complete Google login error:', error);
-    showError('Failed to complete Google login');
+  } catch (err) {
+    // Server unreachable or no Google endpoint — silently leave button hidden
+    console.debug('Google auth status check failed (button stays hidden):', err);
   }
 }
 
-// Generate a unique server ID
-function generateServerId(url) {
-  return btoa(url).replace(/[^a-zA-Z0-9]/g, '').substring(0, 12);
+// Fill the Ember login screen's server-address field and recent-servers list
+function renderLoginExtras() {
+  const addrEl = document.getElementById('serverAddress');
+  if (addrEl) {
+    let host = '';
+    try {
+      const raw = state.serverUrl || window.location.origin;
+      host = new URL(raw, window.location.origin).host;
+    } catch { host = window.location.host; }
+    addrEl.value = host || '';
+    // Desktop has no serving origin to inherit — let the user type a server.
+    if (window.electronAPI) addrEl.removeAttribute('readonly');
+  }
+
+  const list = document.getElementById('recentServers');
+  const divider = document.querySelector('.recent-divider');
+  if (!list) return;
+
+  const servers = state.servers || [];
+  if (!servers.length) {
+    list.innerHTML = '';
+    if (divider) divider.style.display = 'none';
+    return;
+  }
+  if (divider) divider.style.display = '';
+
+  list.innerHTML = servers.map((s, i) => {
+    const tag = (s.icon || s.name || '?').substring(0, 2).toUpperCase();
+    const color = getServerColor(s, i);
+    let host = s.url || '';
+    try { host = new URL(s.url, window.location.origin).host; } catch {}
+    return `
+      <button type="button" class="recent-server" onclick="switchServer('${s.id}')">
+        <div class="tag" style="background:${color};">${escapeHtml(tag)}</div>
+        <div class="meta">
+          <div class="name">${escapeHtml(s.name || 'Server')}</div>
+          <div class="addr">${escapeHtml(host)}</div>
+        </div>
+        <div class="online"><div class="n">●</div><div class="lbl">saved</div></div>
+      </button>`;
+  }).join('');
 }
 
 // Set up push-to-talk keyboard handling within the window
@@ -379,6 +511,41 @@ function setupIPCListeners() {
   });
 }
 
+// Web-client session persistence (Electron has its own electron-store path)
+const WEB_TOKEN_KEY = 'f7lans_token';
+const WEB_SERVER_URL_KEY = 'f7lans_serverUrl';
+
+function saveWebSession(token, serverUrl) {
+  try {
+    localStorage.setItem(WEB_TOKEN_KEY, token);
+    if (serverUrl !== undefined && serverUrl !== null) {
+      localStorage.setItem(WEB_SERVER_URL_KEY, serverUrl);
+    }
+  } catch (e) {
+    console.warn('Could not persist session (storage unavailable):', e);
+  }
+}
+
+function loadWebSession() {
+  try {
+    return {
+      token: localStorage.getItem(WEB_TOKEN_KEY),
+      serverUrl: localStorage.getItem(WEB_SERVER_URL_KEY)
+    };
+  } catch (e) {
+    return { token: null, serverUrl: null };
+  }
+}
+
+function clearWebSession() {
+  try {
+    localStorage.removeItem(WEB_TOKEN_KEY);
+    localStorage.removeItem(WEB_SERVER_URL_KEY);
+  } catch (e) {
+    // ignore
+  }
+}
+
 // Try auto login with saved token
 async function tryAutoLogin() {
   try {
@@ -395,6 +562,8 @@ async function tryAutoLogin() {
       // Token invalid, clear it
       if (window.electronAPI) {
         await window.electronAPI.clearToken();
+      } else {
+        clearWebSession();
       }
       state.token = null;
     }
@@ -407,7 +576,15 @@ async function tryAutoLogin() {
 async function handleConnect(e) {
   e.preventDefault();
 
-  const serverUrl = document.getElementById('serverUrl').value.trim();
+  let serverUrl = document.getElementById('serverUrl').value.trim();
+  // Desktop: the visible, editable field is the server address (no same-origin to fall back on).
+  if (window.electronAPI) {
+    let addr = document.getElementById('serverAddress').value.trim();
+    if (addr) {
+      if (!/^https?:\/\//i.test(addr)) addr = 'http://' + addr;
+      serverUrl = addr;
+    }
+  }
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
   const rememberMe = document.getElementById('rememberMe').checked;
@@ -444,6 +621,8 @@ async function handleConnect(e) {
     if (window.electronAPI && rememberMe) {
       await window.electronAPI.saveToken(data.token);
       await window.electronAPI.setServerUrl(cleanUrl);
+    } else if (!window.electronAPI && rememberMe) {
+      saveWebSession(data.token, cleanUrl);
     }
 
     // Show main app
@@ -567,6 +746,147 @@ function connectSocket() {
     // Input acknowledged by server (optional for debugging)
     // console.log('[Game Together] Input received by server');
   });
+
+  // YouTube bot events
+  state.socket.on('youtube:playing', (data) => {
+    console.log('[YouTube] Now playing:', data);
+    addBotVideoToGrid('youtube', data.title, data.url, data.thumbnail);
+    showToast(`Now playing: ${data.title}`, 'success');
+  });
+
+  state.socket.on('youtube:stopped', (data) => {
+    console.log('[YouTube] Stopped');
+    removeBotVideoFromGrid('youtube');
+    showToast('YouTube playback stopped', 'info');
+  });
+
+  // IPTV bot events
+  state.socket.on('iptv:playing', (data) => {
+    console.log('[IPTV] Now playing:', data);
+    console.log('[IPTV] Original stream URL:', data.streamUrl);
+
+    // Try to get HLS version of the stream (many providers support .m3u8 suffix)
+    let streamUrl = data.streamUrl;
+    if (!streamUrl.includes('.m3u8')) {
+      // Remove any existing extension and add .m3u8 for HLS
+      streamUrl = streamUrl.replace(/\.[^/.]+$/, '') + '.m3u8';
+      // If no extension was present, just append
+      if (!streamUrl.endsWith('.m3u8')) {
+        streamUrl = data.streamUrl + '.m3u8';
+      }
+    }
+
+    // Proxy the stream through our server to bypass CORS
+    const proxyUrl = `${state.serverUrl}/api/stream/proxy?url=${encodeURIComponent(streamUrl)}`;
+    console.log('[IPTV] Proxy URL (HLS):', proxyUrl);
+    addBotVideoToGrid('iptv', data.channelName || 'Live TV', proxyUrl, null);
+    showToast(`Now watching: ${data.channelName || 'Live TV'}`, 'success');
+  });
+
+  state.socket.on('iptv:stopped', (data) => {
+    console.log('[IPTV] Stopped');
+    removeBotVideoFromGrid('iptv');
+    showToast('IPTV playback stopped', 'info');
+  });
+
+  // Chrome bot events
+  state.socket.on('chrome:session-started', (data) => {
+    console.log('[Chrome] Session started event received:', data);
+    console.log('[Chrome] Current voice state - inVoice:', state.inVoice, 'voiceChannel:', state.voiceChannel?._id);
+    addBotVideoToGrid('chrome', `Shared Browser: ${data.url}`, data.url, null);
+    showToast('Browser session started', 'success');
+  });
+
+  state.socket.on('chrome:navigate', (data) => {
+    console.log('[Chrome] Navigate:', data);
+    // Update the iframe with new URL
+    addBotVideoToGrid('chrome', `Shared Browser: ${data.url}`, data.url, null);
+  });
+
+  state.socket.on('chrome:session-ended', (data) => {
+    console.log('[Chrome] Session ended event received:', data);
+    console.log('[Chrome] Removing chrome tile from grid');
+    removeBotVideoFromGrid('chrome');
+    showToast('Browser session ended', 'info');
+  });
+
+  // Plex/Emby/Jellyfin events
+  state.socket.on('media:playing', (data) => {
+    console.log('[Media] Now playing:', data);
+    const label = `${data.source}: ${data.title}`;
+
+    // Prepend serverUrl to relative API paths (proxy URLs)
+    let streamUrl = data.streamUrl;
+    if (streamUrl && streamUrl.startsWith('/api/')) {
+      streamUrl = `${state.serverUrl}${streamUrl}`;
+    }
+
+    let thumbnail = data.thumbnail;
+    if (thumbnail && thumbnail.startsWith('/api/')) {
+      thumbnail = `${state.serverUrl}${thumbnail}`;
+    }
+
+    console.log('[Media] Stream URL:', streamUrl);
+    addBotVideoToGrid(`media-${data.source}`, label, streamUrl, thumbnail);
+    showToast(`Now playing: ${data.title}`, 'success');
+  });
+
+  state.socket.on('media:stopped', (data) => {
+    console.log('[Media] Stopped:', data);
+    removeBotVideoFromGrid(`media-${data.source}`);
+    showToast(`${data.source} playback stopped`, 'info');
+  });
+
+  // Twitch bot events
+  state.socket.on('twitch:started', (data) => {
+    console.log('[Twitch] Stream started:', data);
+    const embedUrl = `https://player.twitch.tv/?channel=${data.streamer}&parent=${window.location.hostname}&autoplay=true`;
+    addBotVideoToGrid('twitch', `Twitch: ${data.streamer}`, embedUrl, null);
+    showToast(`Now watching: ${data.streamer} on Twitch`, 'success');
+  });
+
+  state.socket.on('twitch:stopped', (data) => {
+    console.log('[Twitch] Stream stopped');
+    removeBotVideoFromGrid('twitch');
+    showToast('Twitch stream stopped', 'info');
+  });
+
+  // Direct Message events
+  state.socket.on('dm:new', async (dm) => {
+    console.log('[DM] New message:', dm);
+    // Decrypt the message
+    try {
+      if (state.cryptoKeys?.privateKey && dm.encryptedKey) {
+        const aesKey = await decryptAESKey(dm.encryptedKey, state.cryptoKeys.privateKey);
+        dm.decryptedContent = await decryptMessage(dm.encryptedContent, dm.iv, aesKey);
+      }
+    } catch (e) {
+      console.error('Failed to decrypt DM:', e);
+      dm.decryptedContent = '[Unable to decrypt message]';
+    }
+
+    // Add to DM messages if viewing this conversation
+    const otherUserId = dm.sender._id === state.user._id ? dm.recipient : dm.sender._id;
+    if (state.currentDMUser?._id === otherUserId) {
+      state.dmMessages.push(dm);
+      renderDMMessages();
+    }
+
+    // Update conversation list
+    loadDMConversations();
+
+    // Show notification
+    if (dm.sender._id !== state.user._id) {
+      showToast(`DM from ${dm.sender.displayName || dm.sender.username}`, 'info');
+    }
+  });
+
+  state.socket.on('dm:publicKey', (data) => {
+    state.publicKeyCache[data.userId] = data.publicKey;
+  });
+
+  // Initialize E2E encryption keys
+  initializeCryptoKeys();
 }
 
 // Show main app UI
@@ -587,30 +907,47 @@ function renderMainApp() {
   const currentServer = state.servers.find(s => s.id === state.currentServerId);
   const serverName = currentServer?.name || 'F7Lans';
 
+  const userInitial = (state.user?.displayName || state.user?.username || 'U')[0].toUpperCase();
+  const userActivity = state.user?.customStatus || 'Online';
+
   mainApp.innerHTML = `
     <nav class="server-list">
-      ${state.servers.map(server => `
+      <div class="rail-home coal" title="Home · Direct Messages" onclick="goHome()"></div>
+      <div class="rail-label">NET</div>
+      ${state.servers.map((server, i) => {
+        const tag = (server.icon || server.name.substring(0, 2)).toUpperCase().slice(0, 2);
+        const color = getServerColor(server, i);
+        return `
         <div class="server-icon ${server.id === state.currentServerId ? 'active' : ''}"
              title="${escapeHtml(server.name)}"
              onclick="switchServer('${server.id}')"
-             data-server-id="${server.id}">
-          ${server.icon || server.name.substring(0, 2).toUpperCase()}
-        </div>
-      `).join('')}
+             data-server-id="${server.id}" data-color="1"
+             style="--srv-color:${color};">
+          ${escapeHtml(tag)}
+        </div>`;
+      }).join('')}
       ${state.servers.length === 0 ? `
-        <div class="server-icon active" title="F7Lans Home">F7</div>
+        <div class="server-icon active" title="${escapeHtml(serverName)}" data-color="1" style="--srv-color:var(--ember);">${escapeHtml(serverName.substring(0,2).toUpperCase())}</div>
       ` : ''}
-      <div class="server-divider"></div>
       <div class="server-icon add-server" title="Add Server" onclick="openAddServerModal()">+</div>
+      <div class="rail-spacer"></div>
+      <div class="rail-explore" title="Explore servers" onclick="openAddServerModal()">⌖</div>
     </nav>
 
     <aside class="channel-sidebar">
       <div class="server-header" onclick="openServerMenu(event)">
         <h2>${escapeHtml(serverName)}</h2>
-        <span>▼</span>
+        <span>⌄</span>
       </div>
 
+      <div class="sidebar-search">🔍 Search</div>
+
       <div class="channels-container" id="channelsList"></div>
+
+      <div class="dm-section" id="dmSection">
+        <div class="channel-category"><span>Direct Messages</span></div>
+        <div id="dmUsersList"></div>
+      </div>
 
       <div class="voice-status" id="voiceStatus" style="display: none;">
         <div class="voice-info">
@@ -621,26 +958,25 @@ function renderMainApp() {
           </div>
         </div>
         <div class="voice-controls">
-          <button class="voice-btn" id="muteBtn" onclick="toggleMute()" title="Mute">🎤</button>
+          <button class="voice-btn" id="muteBtn" onclick="toggleMute()" title="Mute">🎙</button>
           <button class="voice-btn" id="deafenBtn" onclick="toggleDeafen()" title="Deafen">🎧</button>
-          <button class="voice-btn" onclick="toggleScreenShare()" title="Share Screen">📺</button>
-          <button class="voice-btn disconnect" onclick="leaveVoice()" title="Disconnect">📞</button>
+          <button class="voice-btn" onclick="toggleScreenShare()" title="Share Screen">🖥</button>
+          <button class="voice-btn disconnect" onclick="leaveVoice()" title="Disconnect">⏏</button>
         </div>
       </div>
 
       <div class="user-panel">
         <div class="user-avatar" onclick="openSettings()">
-          ${state.user?.avatar ? `<img src="${state.user.avatar}">` : (state.user?.displayName || state.user?.username || 'U')[0].toUpperCase()}
+          ${state.user?.avatar ? `<img src="${state.user.avatar}">` : userInitial}
           <div class="status-indicator online"></div>
         </div>
         <div class="user-info">
-          <div class="user-name">${state.user?.displayName || state.user?.username}</div>
-          <div class="user-tag">#${state.user?.username}</div>
+          <div class="user-name">${escapeHtml(state.user?.displayName || state.user?.username || 'User')}</div>
+          <div class="user-tag">${escapeHtml(userActivity)}</div>
         </div>
         <div class="user-controls">
-          <button class="user-btn" onclick="toggleMute()" title="Mute">🎤</button>
-          <button class="user-btn" onclick="toggleDeafen()" title="Deafen">🎧</button>
-          <button class="user-btn" onclick="openSettings()" title="Settings">⚙️</button>
+          <button class="user-btn" onclick="toggleMute()" title="Mute">🎙</button>
+          <button class="user-btn" onclick="openSettings()" title="Settings">⚙</button>
         </div>
       </div>
     </aside>
@@ -651,63 +987,73 @@ function renderMainApp() {
         <h3 id="channelName">general</h3>
         <div class="divider"></div>
         <span class="description" id="channelDescription"></span>
+        <div class="fed-pill" onclick="openFederationModal()"><span class="glyph">◈</span> Federation</div>
         <div class="header-actions">
           <button class="header-btn" id="chatFullscreenBtn" onclick="toggleChatFullscreen()" title="Fullscreen">⛶</button>
-          <button class="header-btn" onclick="showMembers()" title="Members">👥</button>
-          <button class="header-btn" onclick="openSettings()" title="Settings">⚙️</button>
+          <button class="header-btn" id="membersToggleBtn" onclick="toggleMembers()" title="Members">☰</button>
+          <button class="header-btn" onclick="openSettings()" title="Settings">⚙</button>
         </div>
       </header>
 
       <div class="messages-area" id="messagesArea"></div>
 
+      <div class="typing-indicator" id="typingIndicator" style="display:none;"></div>
+
       <div class="message-input-container">
         <div class="message-input-wrapper">
           <div class="input-actions-left">
-            <button class="input-btn" title="Attach Image" onclick="openFilePicker()">➕</button>
+            <button class="input-btn" title="Attach Image" onclick="openFilePicker()">+</button>
+            <span class="input-prefix" id="composerPrefix">[#general]</span>
           </div>
           <textarea class="message-input" id="messageInput"
-            placeholder="Message #general (drag images to attach)"
+            placeholder="Message #general"
             rows="1"
             onkeydown="handleInputKeyDown(event)"></textarea>
           <div class="input-actions-right">
-            <button class="input-btn" title="Emoji">😀</button>
+            <button class="input-btn" title="GIF">GIF</button>
+            <button class="input-btn" title="Emoji">☺</button>
+            <button class="send-btn" title="Send" onclick="sendMessage()">➤</button>
           </div>
         </div>
       </div>
     </main>
 
+    <aside class="members-panel" id="membersPanel" style="display:none;">
+      <div id="membersList"></div>
+    </aside>
+
     <aside class="voice-panel" id="voicePanel" style="display: none;">
       <div class="voice-panel-header">
+        <span style="font-family:var(--font-mono);color:var(--ember-light);">🔊</span>
         <h3 id="voicePanelTitle">Voice</h3>
-        <button class="header-btn">⛶</button>
+        <span class="voice-quality"><span style="width:6px;height:6px;border-radius:50%;background:var(--on);display:inline-block;"></span>Excellent · 24ms</span>
+        <button class="header-btn" id="voicePanelFullscreenBtn" onclick="toggleVoicePanelFullscreen()" title="Fullscreen">⛶</button>
       </div>
-      <div class="voice-panel-content">
-        <div id="videoGrid" class="video-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin-bottom: 12px;"></div>
+      <div class="voice-panel-content" style="overflow-y: auto; flex: 1;">
+        <div id="videoGrid" class="video-grid" style="margin-bottom: 4px;"></div>
         <div class="voice-participants">
           <h4>In Voice — <span id="participantCount">0</span></h4>
           <div id="participantsList"></div>
         </div>
       </div>
-      <div class="voice-actions" style="grid-template-columns: repeat(5, 1fr);">
+      <div class="voice-actions">
         <button class="action-btn" id="micBtnPanel" onclick="toggleMute()">
-          <span class="icon">🎤</span>
-          <span class="label">Mute</span>
+          <span class="icon">🎙</span><span class="label">Mic</span>
+        </button>
+        <button class="action-btn" id="deafenBtnPanel" onclick="toggleDeafen()">
+          <span class="icon">🎧</span><span class="label">Deafen</span>
         </button>
         <button class="action-btn" id="camBtnPanel" onclick="toggleCamera()">
-          <span class="icon">📷</span>
-          <span class="label">Camera</span>
+          <span class="icon">🎥</span><span class="label">Camera</span>
         </button>
-        <button class="action-btn" id="shareBtnPanel" onclick="toggleScreenShare()">
-          <span class="icon">📺</span>
-          <span class="label">Share</span>
+        <button class="action-btn primary" id="shareBtnPanel" onclick="toggleScreenShare()">
+          <span class="icon">🖥</span><span class="label">Share</span>
         </button>
         <button class="action-btn" onclick="openBotsModal()">
-          <span class="icon">🤖</span>
-          <span class="label">Bots</span>
+          <span class="icon">🤖</span><span class="label">Bots</span>
         </button>
         <button class="action-btn danger" onclick="leaveVoice()">
-          <span class="icon">📞</span>
-          <span class="label">Leave</span>
+          <span class="icon">⏏</span><span class="label">Leave</span>
         </button>
       </div>
     </aside>
@@ -731,6 +1077,9 @@ async function loadChannels() {
     state.channels = data.channels;
     renderChannels();
 
+    // Load DM conversations
+    loadDMConversations();
+
     // Select first text channel if none selected
     if (!state.currentChannel) {
       const textChannel = state.channels.find(c => c.type === 'text');
@@ -746,6 +1095,8 @@ function renderChannels() {
   const container = document.getElementById('channelsList');
   if (!container) return;
 
+  const isAdmin = state.user?.role === 'admin' || state.user?.role === 'superadmin';
+
   const grouped = state.channels.reduce((acc, ch) => {
     const cat = ch.category || 'General';
     if (!acc[cat]) acc[cat] = [];
@@ -754,6 +1105,14 @@ function renderChannels() {
   }, {});
 
   let html = '';
+
+  // Add create channel button for admins
+  if (isAdmin) {
+    html += `<div class="channel create-channel" onclick="openCreateChannelModal()" style="color: var(--text-muted); font-style: italic;">
+      <span class="channel-icon">+</span>
+      <span class="channel-name">Create Channel</span>
+    </div>`;
+  }
 
   for (const [category, channels] of Object.entries(grouped)) {
     html += `<div class="channel-category"><span>▼</span><span>${category}</span></div>`;
@@ -769,6 +1128,7 @@ function renderChannels() {
           <span class="channel-icon">${isVoice ? '🔊' : '#'}</span>
           <span class="channel-name">${channel.name}</span>
           ${isVoice && userCount > 0 ? `<span class="channel-users">${userCount}</span>` : ''}
+          ${isAdmin ? `<span class="channel-edit" onclick="event.stopPropagation(); openEditChannelModal('${channel._id}')" title="Edit Channel">⚙️</span>` : ''}
         </div>
       `;
     }
@@ -786,17 +1146,23 @@ function selectChannelById(channelId) {
 // Select channel
 async function selectChannel(channel) {
   state.currentChannel = channel;
+  state.currentDMUser = null; // Clear DM state
 
   if (state.socket) {
     state.socket.emit('channel:join', channel._id);
   }
 
   renderChannels();
+  renderDMUsers();
 
-  // Update header
+  // Update header with hash symbol for channel
+  document.querySelector('.channel-header .hash').style.display = '';
   document.getElementById('channelName').textContent = channel.name;
-  document.getElementById('channelDescription').textContent = channel.description || '';
+  const topic = channel.topic || channel.description || '';
+  document.getElementById('channelDescription').textContent = topic ? `topic: ${topic}` : '';
   document.getElementById('messageInput').placeholder = `Message #${channel.name}`;
+  const prefix = document.getElementById('composerPrefix');
+  if (prefix) prefix.textContent = `[#${channel.name}]`;
 
   // Load messages
   await loadMessages(channel._id);
@@ -818,53 +1184,281 @@ async function loadMessages(channelId) {
   }
 }
 
+// ==================== Direct Messages ====================
+
+// Load DM conversations list
+async function loadDMConversations() {
+  try {
+    const response = await fetch(`${state.serverUrl}/api/dm/conversations`, {
+      headers: { 'Authorization': `Bearer ${state.token}` }
+    });
+
+    const data = await response.json();
+    state.dmConversations = data.conversations || [];
+    renderDMUsers();
+  } catch (error) {
+    console.error('Failed to load DM conversations:', error);
+  }
+}
+
+// Render DM users in sidebar
+function renderDMUsers() {
+  const container = document.getElementById('dmUsersList');
+  if (!container) return;
+
+  if (state.dmConversations.length === 0) {
+    container.innerHTML = '<div style="padding: 8px 16px; color: var(--txt-5); font-size: 12px;">No conversations yet</div>';
+    return;
+  }
+
+  container.innerHTML = state.dmConversations.map(conv => {
+    const user = conv.user;
+    if (!user) return '';
+    const isActive = state.currentDMUser?._id === user._id;
+    const name = user.displayName || user.username || 'User';
+    const unread = conv.unreadCount > 0 ? `<span class="dm-unread">${conv.unreadCount}</span>` : '';
+    const presence = user.presence || 'offline';
+    const preview = conv.lastMessagePreview || conv.preview || '';
+
+    return `
+      <div class="channel dm-user ${isActive ? 'active' : ''}" onclick="openDM('${user._id}')">
+        <span class="dm-avatar" style="background:${getAvatarColor(name)};">${user.avatar ? `<img src="${user.avatar}" style="width:30px;height:30px;border-radius:50%;object-fit:cover;">` : name[0].toUpperCase()}<span class="status-indicator ${presence}"></span></span>
+        <span class="channel-name" style="font-family:var(--font-ui);">${escapeHtml(name)}${preview ? `<div class="dm-preview">${escapeHtml(preview)}</div>` : ''}</span>
+        ${unread}
+      </div>
+    `;
+  }).join('');
+}
+
+// Open DM with a user
+async function openDM(userId) {
+  // Clear current channel selection
+  state.currentChannel = null;
+  renderChannels();
+
+  // Get user info
+  try {
+    const response = await fetch(`${state.serverUrl}/api/users/${userId}`, {
+      headers: { 'Authorization': `Bearer ${state.token}` }
+    });
+    const data = await response.json();
+    state.currentDMUser = data.user || { _id: userId };
+  } catch (e) {
+    state.currentDMUser = { _id: userId };
+  }
+
+  // Update header - hide hash, show @ for DMs
+  const hashEl = document.querySelector('.channel-header .hash');
+  if (hashEl) hashEl.style.display = 'none';
+
+  const userName = state.currentDMUser.displayName || state.currentDMUser.username || 'User';
+  document.getElementById('channelName').textContent = '@' + userName;
+  document.getElementById('channelDescription').innerHTML = '<span style="color:var(--on);font-family:var(--font-mono);font-size:11px;">● E2E ENCRYPTED</span>';
+
+  // Update input placeholder + composer prefix
+  document.getElementById('messageInput').placeholder = `Message @${userName}`;
+  const prefix = document.getElementById('composerPrefix');
+  if (prefix) prefix.textContent = `[@${userName}]`;
+
+  // Load messages
+  await loadDMMessages(userId);
+  renderDMUsers();
+}
+
+// Load DM messages with a user
+async function loadDMMessages(userId) {
+  try {
+    const response = await fetch(`${state.serverUrl}/api/dm/${userId}`, {
+      headers: { 'Authorization': `Bearer ${state.token}` }
+    });
+
+    const data = await response.json();
+    state.dmMessages = data.messages || [];
+
+    // Decrypt messages
+    for (const dm of state.dmMessages) {
+      try {
+        if (state.cryptoKeys?.privateKey && dm.encryptedKey) {
+          const aesKey = await decryptAESKey(dm.encryptedKey, state.cryptoKeys.privateKey);
+          dm.decryptedContent = await decryptMessage(dm.encryptedContent, dm.iv, aesKey);
+        }
+      } catch (e) {
+        dm.decryptedContent = '[Unable to decrypt]';
+      }
+    }
+
+    renderDMMessages();
+    scrollToBottom();
+  } catch (error) {
+    showToast('Failed to load messages', 'error');
+  }
+}
+
+// Render DM messages
+function renderDMMessages() {
+  const container = document.getElementById('messagesArea');
+  if (!container) return;
+
+  const peer = state.currentDMUser?.displayName || state.currentDMUser?.username || 'this user';
+
+  if (state.dmMessages.length === 0) {
+    container.innerHTML = `
+      <div class="channel-intro">
+        <div class="intro-tile">🔒</div>
+        <h2>@${escapeHtml(peer)}</h2>
+        <p>This is the start of your <span style="color:var(--on);">end-to-end encrypted</span> direct messages. Even admins can't read these.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = state.dmMessages.map(dm => {
+    const isMe = dm.sender?._id === state.user?._id || dm.sender === state.user?._id;
+    const author = isMe ? state.user : (dm.sender || {});
+    const name = author.displayName || author.username || 'User';
+    const time = `[${new Date(dm.createdAt).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })}]`;
+    const nickColor = getNickColor(author.username || name);
+
+    return `
+      <div class="msg-row dm">
+        <div class="msg-time">${time}</div>
+        <div class="msg-nick"><span class="nick" style="color:${nickColor};">${escapeHtml(name)}</span><span class="encrypted-badge" title="End-to-end encrypted">🔒</span></div>
+        <div class="msg-body"><div class="message-text">${escapeHtml(dm.decryptedContent || '[Encrypted]')}</div></div>
+      </div>
+    `;
+  }).join('');
+}
+
+// Send encrypted DM
+async function sendEncryptedDM(content) {
+  if (!state.currentDMUser || !content.trim()) return;
+
+  try {
+    // Get recipient's public key
+    let recipientPublicKeyJwk = state.publicKeyCache[state.currentDMUser._id];
+    if (!recipientPublicKeyJwk) {
+      const response = await fetch(`${state.serverUrl}/api/dm/${state.currentDMUser._id}/public-key`, {
+        headers: { 'Authorization': `Bearer ${state.token}` }
+      });
+      const data = await response.json();
+      recipientPublicKeyJwk = data.publicKey;
+      state.publicKeyCache[state.currentDMUser._id] = recipientPublicKeyJwk;
+    }
+
+    if (!recipientPublicKeyJwk) {
+      showToast('Recipient has not set up encryption yet', 'error');
+      return;
+    }
+
+    const recipientPublicKey = await importPublicKey(recipientPublicKeyJwk);
+
+    // Generate AES key for this message
+    const aesKey = await generateAESKey();
+
+    // Encrypt message content
+    const { encryptedContent, iv } = await encryptMessage(content, aesKey);
+
+    // Encrypt AES key with recipient's public key
+    const encryptedKey = await encryptAESKey(aesKey, recipientPublicKey);
+
+    // Send via socket
+    state.socket.emit('dm:send', {
+      recipientId: state.currentDMUser._id,
+      encryptedContent,
+      iv,
+      encryptedKey
+    });
+
+    // Clear input
+    document.getElementById('messageInput').value = '';
+
+  } catch (error) {
+    console.error('Failed to send encrypted DM:', error);
+    showToast('Failed to send message: ' + error.message, 'error');
+  }
+}
+
+// Start DM from user profile
+function startDMWithUser(userId, userName) {
+  // Add to conversations if not already there
+  if (!state.dmConversations.find(c => c.user?._id === userId)) {
+    state.dmConversations.unshift({
+      user: { _id: userId, username: userName, displayName: userName }
+    });
+    renderDMUsers();
+  }
+  openDM(userId);
+}
+
 // Render messages
+// Solid nick color (IRC-style colored handles) derived from the name
+function getNickColor(name) {
+  const palette = ['#FF6A2B', '#3D7BFF', '#19C37D', '#B86BFF', '#E8A33D', '#FF8A3D', '#4FCB6B'];
+  let hash = 0;
+  for (let i = 0; i < (name || '').length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return palette[Math.abs(hash) % palette.length];
+}
+
+// IRC mode prefix + role tag for an author
+function nickMeta(author) {
+  const role = author?.role || 'member';
+  const isBot = author?.isBot || author?.bot;
+  if (isBot) return { mode: '', modeClass: '', tag: 'bot', tagClass: 'bot' };
+  if (role === 'admin' || role === 'superadmin') return { mode: '@', modeClass: 'mode-op', tag: role === 'superadmin' ? 'admin' : 'op', tagClass: 'op' };
+  if (role === 'moderator') return { mode: '@', modeClass: 'mode-op', tag: 'op', tagClass: 'op' };
+  if (author?.voiced) return { mode: '+', modeClass: 'mode-voice', tag: '', tagClass: '' };
+  return { mode: '', modeClass: '', tag: '', tagClass: '' };
+}
+
 function renderMessages() {
   const container = document.getElementById('messagesArea');
   if (!container) return;
 
+  const chName = state.currentChannel?.name || 'general';
+
   if (state.messages.length === 0) {
     container.innerHTML = `
-      <div style="text-align: center; padding: 40px; color: var(--text-muted);">
-        <h2 style="color: var(--text-primary); margin-bottom: 8px;">Welcome to #${state.currentChannel?.name || 'general'}!</h2>
-        <p>This is the beginning of the channel.</p>
+      <div class="channel-intro">
+        <div class="intro-tile">#</div>
+        <h2>Welcome to #${escapeHtml(chName)}</h2>
+        <p>${escapeHtml(state.currentChannel?.description || 'The start of the channel. Squad up, share clips, and find your next match.')}</p>
       </div>
     `;
     return;
   }
 
   let html = '';
-  let lastAuthor = null;
 
   for (const msg of state.messages) {
-    const author = msg.author;
+    const author = msg.author || {};
+    const name = author.displayName || author.username || 'unknown';
     const time = new Date(msg.createdAt);
-    const showHeader = lastAuthor !== author._id;
+    const timeStr = `[${time.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })}]`;
+    const meta = nickMeta(author);
+    const nickColor = getNickColor(author.username || name);
 
-    if (showHeader) {
-      const timeStr = formatTime(time);
-      const avatarColor = getAvatarColor(author.username);
-
-      html += `
-        <div class="message-group">
-          <div class="message-avatar" style="background: ${avatarColor};">
-            ${author.avatar ? `<img src="${author.avatar}">` : (author.displayName || author.username)[0].toUpperCase()}
-          </div>
-          <div class="message-content">
-            <div class="message-header">
-              <span class="message-author" style="color: ${getRoleColor(author.role)};">${author.displayName || author.username}</span>
-              <span class="message-timestamp">${timeStr}</span>
-            </div>
-      `;
+    let attachments = '';
+    if (Array.isArray(msg.attachments) && msg.attachments.length) {
+      attachments = `<div class="message-attachments">` + msg.attachments.map(a => {
+        const url = a.url || a;
+        return `<div class="message-attachment" onclick="window.open('${escapeHtml(url)}','_blank')"><img src="${escapeHtml(url)}"></div>`;
+      }).join('') + `</div>`;
     }
 
-    html += `<div class="message-text">${escapeHtml(msg.content)}</div>`;
-
-    if (showHeader) {
-      html += '</div></div>';
-    }
-
-    lastAuthor = author._id;
+    html += `
+      <div class="msg-row">
+        <div class="msg-time">${timeStr}</div>
+        <div class="msg-nick">
+          ${meta.mode ? `<span class="${meta.modeClass}">${meta.mode}</span>` : ''}
+          <span class="nick" style="color:${nickColor};">${escapeHtml(name)}</span>
+          ${meta.tag ? `<span class="role-tag ${meta.tagClass}">${meta.tag}</span>` : ''}
+        </div>
+        <div class="msg-body">
+          <div class="message-text">${escapeHtml(msg.content || '')}</div>
+          ${attachments}
+        </div>
+      </div>
+    `;
   }
 
   container.innerHTML = html;
@@ -989,6 +1583,20 @@ function toggleChatFullscreen() {
   }
 }
 
+// Toggle voice panel fullscreen mode (native browser fullscreen)
+function toggleVoicePanelFullscreen() {
+  const voicePanel = document.getElementById('voicePanel');
+  const btn = document.getElementById('voicePanelFullscreenBtn');
+
+  if (document.fullscreenElement === voicePanel) {
+    document.exitFullscreen();
+    btn.title = 'Fullscreen';
+  } else if (voicePanel.requestFullscreen) {
+    voicePanel.requestFullscreen();
+    btn.title = 'Exit Fullscreen';
+  }
+}
+
 async function toggleCamera() {
   if (!state.isCameraOn) {
     try {
@@ -1064,6 +1672,11 @@ function getScreenShareQuality() {
 }
 
 async function toggleScreenShare() {
+  // Exit fullscreen if active (modal won't show on top of native fullscreen)
+  if (document.fullscreenElement) {
+    await document.exitFullscreen();
+  }
+
   // Always allow adding more screen shares - show picker
   if (window.electronAPI && window.electronAPI.getScreenSources) {
     try {
@@ -1447,6 +2060,222 @@ function removeVideoFromGrid(id) {
   }
 }
 
+// Add bot video/stream to the video grid (YouTube, IPTV, Chrome, Plex, etc.)
+function addBotVideoToGrid(botId, label, url, thumbnail) {
+  console.log('[addBotVideoToGrid] Called with:', { botId, label, url, thumbnail });
+  const grid = document.getElementById('videoGrid');
+  console.log('[addBotVideoToGrid] videoGrid element:', grid);
+  if (!grid) {
+    console.warn('[addBotVideoToGrid] No videoGrid element found - user may not be in voice channel');
+    return;
+  }
+
+  // Remove existing element if present
+  removeBotVideoFromGrid(botId);
+
+  const tile = document.createElement('div');
+  tile.className = 'video-tile bot-video';
+  tile.id = `bot-video-tile-${botId}`;
+  // Let CSS handle most styling, just ensure it's visible
+  tile.style.cssText = 'position: relative; min-height: 200px;';
+
+  // For YouTube, use an iframe embed
+  if (botId === 'youtube' && url) {
+    // Extract video ID from URL
+    const videoId = extractYouTubeId(url);
+    if (videoId) {
+      tile.innerHTML = `
+        <iframe
+          src="https://www.youtube.com/embed/${videoId}?autoplay=1"
+          style="width: 100%; height: 100%; min-height: 200px; border: none; position: absolute; top: 0; left: 0;"
+          allow="autoplay; encrypted-media"
+          allowfullscreen>
+        </iframe>
+        <div class="video-label">${escapeHtml(label)}</div>
+      `;
+    } else {
+      // Fallback if video ID can't be extracted
+      tile.innerHTML = `
+        <div style="width: 100%; height: 100%; min-height: 200px; display: flex; align-items: center; justify-content: center; background: var(--bg-darker);">
+          <div style="text-align: center; color: var(--text-muted);">
+            <div style="font-size: 32px; margin-bottom: 8px;">▶️</div>
+            <div>${escapeHtml(label)}</div>
+            <div style="font-size: 11px; margin-top: 4px;">Invalid YouTube URL</div>
+          </div>
+        </div>
+      `;
+    }
+  } else if (botId === 'twitch' && url) {
+    // For Twitch, use an iframe embed (URL is already the embed URL)
+    tile.innerHTML = `
+      <iframe
+        src="${escapeHtml(url)}"
+        style="width: 100%; height: 100%; min-height: 200px; border: none; position: absolute; top: 0; left: 0;"
+        allow="autoplay; fullscreen"
+        allowfullscreen>
+      </iframe>
+      <div class="video-label">${escapeHtml(label)}</div>
+    `;
+  } else if (botId === 'chrome' && url) {
+    // For Chrome bot, use an iframe to show the webpage
+    tile.innerHTML = `
+      <iframe
+        src="${escapeHtml(url)}"
+        style="width: 100%; height: 100%; min-height: 200px; border: none; background: white; position: absolute; top: 0; left: 0;"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        allowfullscreen>
+      </iframe>
+      <div class="video-label">${escapeHtml(label)}</div>
+    `;
+  } else if (botId === 'iptv' && url) {
+    // For IPTV, try HLS first, fall back to MPEG-TS
+    const videoId = `iptv-video-${Date.now()}`;
+    tile.innerHTML = `
+      <video id="${videoId}" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: contain; background: #000;"></video>
+      <div class="video-label">${escapeHtml(label)}</div>
+      <button onclick="const v=this.parentElement.querySelector('video'); v.muted=!v.muted; this.textContent=v.muted?'🔊 Unmute':'🔇 Mute';" style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; z-index: 10;">🔊 Unmute</button>
+    `;
+
+    // Store original URL (without .m3u8) for MPEG-TS fallback
+    const originalUrl = url.replace('.m3u8', '');
+
+    // After appending to DOM, initialize player
+    setTimeout(() => {
+      const video = document.getElementById(videoId);
+      if (!video || !url) return;
+
+      const tryMpegTs = () => {
+        console.log('[IPTV] Trying MPEG-TS fallback with mpegts.js');
+        if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+          const player = mpegts.createPlayer({
+            type: 'mpegts',
+            isLive: true,
+            url: originalUrl
+          });
+          player.attachMediaElement(video);
+          player.load();
+          player.play().catch(e => console.log('[IPTV] MPEG-TS autoplay blocked:', e));
+          video._mpegts = player;
+          console.log('[IPTV] MPEG-TS player initialized');
+        } else {
+          console.error('[IPTV] mpegts.js not supported');
+          tile.querySelector('.video-label').textContent = `${label} (Format not supported)`;
+        }
+      };
+
+      if (Hls && Hls.isSupported()) {
+        console.log('[IPTV] Trying HLS first');
+        const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          console.log('[IPTV] HLS manifest parsed, playing');
+          video.play().catch(e => console.log('[IPTV] Autoplay blocked:', e));
+        });
+
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          console.error('[IPTV] HLS error:', data.type, data.details);
+          if (data.fatal) {
+            console.log('[IPTV] Fatal HLS error, trying MPEG-TS fallback');
+            hls.destroy();
+            tryMpegTs();
+          }
+        });
+
+        video._hls = hls;
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Native HLS support (Safari)
+        video.src = url;
+        video.play().catch(e => console.log('[IPTV] Autoplay blocked:', e));
+      } else {
+        // No HLS support, try MPEG-TS directly
+        tryMpegTs();
+      }
+    }, 100);
+  } else if (url) {
+    // For other bots (Plex, Emby, Jellyfin), use video element with HLS support
+    const videoId = `media-video-${Date.now()}`;
+    tile.innerHTML = `
+      <video id="${videoId}" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: contain; background: #000;"></video>
+      <div class="video-label">${escapeHtml(label)}</div>
+      <button onclick="const v=this.parentElement.querySelector('video'); v.muted=!v.muted; this.textContent=v.muted?'🔊 Unmute':'🔇 Mute';" style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; z-index: 10;">🔊 Unmute</button>
+    `;
+    setTimeout(() => {
+      const video = document.getElementById(videoId);
+      if (video && url) {
+        // Check if it's an HLS stream
+        if (url.includes('.m3u8') && Hls && Hls.isSupported()) {
+          const hls = new Hls();
+          hls.loadSource(url);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+          video._hls = hls;
+        } else {
+          video.src = url;
+          video.play().catch(() => {});
+        }
+      }
+    }, 100);
+  } else if (thumbnail) {
+    // Fallback to thumbnail with label
+    tile.innerHTML = `
+      <img src="${escapeHtml(thumbnail)}" style="width: 100%; height: 100%; object-fit: cover;" alt="${escapeHtml(label)}">
+      <div class="video-label">${escapeHtml(label)}</div>
+    `;
+  } else {
+    // Placeholder
+    tile.innerHTML = `
+      <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: var(--bg-darker);">
+        <div style="text-align: center; color: var(--text-muted);">
+          <div style="font-size: 32px; margin-bottom: 8px;">🎬</div>
+          <div>${escapeHtml(label)}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Add double-click to fullscreen
+  tile.addEventListener('dblclick', () => toggleVideoFullscreen(tile));
+
+  grid.appendChild(tile);
+  console.log('[addBotVideoToGrid] Tile appended to grid. Current grid children:', grid.children.length);
+}
+
+// Remove bot video from the grid
+function removeBotVideoFromGrid(botId) {
+  const tile = document.getElementById(`bot-video-tile-${botId}`);
+  if (tile) {
+    // Cleanup HLS or MPEG-TS instance if present
+    const video = tile.querySelector('video');
+    if (video) {
+      if (video._hls) {
+        video._hls.destroy();
+      }
+      if (video._mpegts) {
+        video._mpegts.destroy();
+      }
+    }
+    tile.remove();
+  }
+}
+
+// Extract YouTube video ID from URL
+function extractYouTubeId(url) {
+  if (!url) return null;
+  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : null;
+}
+
+// Toggle video tile fullscreen
+function toggleVideoFullscreen(element) {
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  } else if (element.requestFullscreen) {
+    element.requestFullscreen();
+  }
+}
+
 function updateVoiceUI() {
   const muteBtn = document.getElementById('muteBtn');
   const deafenBtn = document.getElementById('deafenBtn');
@@ -1522,7 +2351,16 @@ async function sendMessage() {
   const input = document.getElementById('messageInput');
   const content = input.value.trim();
 
-  if ((!content && state.pendingAttachments.length === 0) || !state.currentChannel || !state.socket) return;
+  if (!content || !state.socket) return;
+
+  // Check if we're in a DM conversation
+  if (state.currentDMUser) {
+    await sendEncryptedDM(content);
+    return;
+  }
+
+  // Regular channel message
+  if (!state.currentChannel) return;
 
   const messageData = {
     channelId: state.currentChannel._id,
@@ -1692,163 +2530,370 @@ async function openSettings() {
     `<option value="${d.deviceId}" ${state.settings.cameraDevice === d.deviceId ? 'selected' : ''}>${escapeHtml(d.label || 'Camera ' + (state.devices.videoInputs.indexOf(d) + 1))}</option>`
   ).join('');
 
-  content.innerHTML = `
-    <div class="modal-header">
-      <h2>Settings</h2>
-      <button class="modal-close" onclick="closeModal()">✕</button>
+  const isAdmin = state.user?.role === 'admin' || state.user?.role === 'superadmin';
+  const u = state.user || {};
+  const initials = (u.displayName || u.username || 'U').substring(0, 2).toUpperCase();
+  const accent = (label) => `<div class="settings-label">${label}</div>`;
+
+  // remove any prior takeover
+  document.querySelector('.settings-takeover')?.remove();
+
+  const toggleRow = (title, sub, on) => `
+    <div class="card-row"><div class="grow"><div class="row-title">${title}</div>${sub ? `<div class="row-sub">${sub}</div>` : ''}</div>
+      <div class="toggle ${on ? 'on' : ''}" onclick="this.classList.toggle('on')"><span class="knob"></span></div></div>`;
+
+  const bots = [
+    { id: 'youtube', name: 'YouTube', color: '#FF3D3D', letter: 'YT', cat: 'Streaming', desc: 'Queue and sync YouTube playback in any watch channel.', on: true },
+    { id: 'plex', name: 'Plex', color: '#E8A33D', letter: 'PL', cat: 'Media server', desc: 'Stream your Plex library together, perfectly in sync.', on: true },
+    { id: 'jellyfin', name: 'Jellyfin', color: '#7B5CFF', letter: 'JF', cat: 'Media server', desc: 'Open-source media server playback for the whole room.', on: true },
+    { id: 'emby', name: 'Emby', color: '#19C37D', letter: 'EM', cat: 'Media server', desc: 'Watch your Emby library with friends.', on: false },
+    { id: 'iptv', name: 'IPTV', color: '#3D7BFF', letter: 'IP', cat: 'Live TV', desc: 'Share live TV streams and channels.', on: true },
+    { id: 'twitch', name: 'Twitch', color: '#B86BFF', letter: 'TW', cat: 'Streaming', desc: 'Co-watch Twitch streams in a watch channel.', on: true },
+    { id: 'chrome', name: 'Chrome', color: '#FFB454', letter: 'CH', cat: 'Browser', desc: 'Shared browser session for anything else.', on: false },
+    { id: 'game-together', name: 'Game Together', color: '#FF6A2B', letter: 'GT', cat: 'Co-op', desc: 'Stream a game and pass virtual controllers to friends.', on: true },
+  ];
+  const enabledCount = bots.filter(b => b.on).length;
+
+  const roles = [
+    { id: 'admin', name: 'Admin', color: '#FF6A2B', count: 2 },
+    { id: 'moderator', name: 'Moderator', color: '#3D7BFF', count: 4 },
+    { id: 'streamer', name: 'Streamer', color: '#B86BFF', count: 6 },
+    { id: 'member', name: 'Member', color: '#9A938A', count: 142 },
+  ];
+
+  const nav = (group, items) => `
+    <div class="settings-nav-group">${group}</div>
+    ${items.map(it => `<button class="settings-nav-item ${it.id === 'account' ? 'active' : ''}" data-tab="${it.id}" onclick="switchSettingsTab('${it.id}')"><span class="nav-ico">${it.ico}</span><span class="nav-label">${it.label}</span></button>`).join('')}`;
+
+  const takeover = document.createElement('div');
+  takeover.className = 'settings-takeover';
+  takeover.innerHTML = `
+    <div class="settings-nav">
+      <div class="settings-nav-head"><span>Settings</span></div>
+      <div class="settings-nav-scroll">
+        ${nav('User Settings', [
+          { id: 'account', ico: '◉', label: 'Account' },
+          { id: 'profile', ico: '✦', label: 'Profile' },
+          { id: 'voice', ico: '🎙', label: 'Voice & Video' },
+          { id: 'notifications', ico: '🔔', label: 'Notifications' },
+          { id: 'appearance', ico: '◐', label: 'Appearance' },
+        ])}
+        ${nav('Server', [
+          { id: 'bots', ico: '🤖', label: 'Media Bots' },
+          { id: 'groups', ico: '⚑', label: 'Groups & Roles' },
+          { id: 'federation', ico: '◈', label: 'Federation' },
+          { id: 'channels', ico: '#', label: 'Channels' },
+          { id: 'server', ico: '⚙', label: 'Server Settings' },
+        ])}
+      </div>
+      <button class="settings-logout" onclick="disconnect()"><span>⏏</span>Log out</button>
     </div>
-    <div class="modal-body" style="max-height: 500px; overflow-y: auto;">
-      <div class="settings-section">
-        <h3>Devices</h3>
-        <div class="settings-row">
-          <label>Microphone</label>
-          <select id="audioInputDevice" style="flex: 1; max-width: 200px; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-            <option value="">Default</option>
-            ${audioInputOptions}
-          </select>
-          <button class="btn-secondary" onclick="testMicrophone()" style="margin-left: 8px; padding: 8px;">Test</button>
-        </div>
-        <div class="settings-row">
-          <label>Speakers</label>
-          <select id="audioOutputDevice" style="flex: 1; max-width: 200px; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-            <option value="">Default</option>
-            ${audioOutputOptions}
-          </select>
-        </div>
-        <div class="settings-row">
-          <label>Camera</label>
-          <select id="cameraDevice" style="flex: 1; max-width: 200px; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-            <option value="">Default</option>
-            ${videoInputOptions}
-          </select>
-          <button class="btn-secondary" onclick="testCamera()" style="margin-left: 8px; padding: 8px;">Preview</button>
-        </div>
-        <div id="cameraPreviewContainer" style="display: none; margin-top: 12px; background: var(--bg-dark); border-radius: 8px; overflow: hidden;">
-          <video id="cameraPreview" autoplay playsinline muted style="width: 100%; max-height: 180px; transform: scaleX(-1);"></video>
-        </div>
-      </div>
 
-      <div class="settings-section">
-        <h3>Audio</h3>
-        <div class="settings-row">
-          <label>Input Volume</label>
-          <input type="range" min="0" max="200" value="${state.settings.inputVolume || 100}" id="inputVolume">
-          <span id="inputVolumeLabel" style="min-width: 40px; text-align: right;">${state.settings.inputVolume || 100}%</span>
-        </div>
-        <div class="settings-row">
-          <label>Output Volume</label>
-          <input type="range" min="0" max="200" value="${state.settings.outputVolume || 100}" id="outputVolume">
-          <span id="outputVolumeLabel" style="min-width: 40px; text-align: right;">${state.settings.outputVolume || 100}%</span>
-        </div>
-        <div class="settings-row">
-          <label>Voice Mode</label>
-          <select id="voiceMode" onchange="togglePTTKeyRow()">
-            <option value="ptt" ${!state.settings.voiceActivated ? 'selected' : ''}>Push to Talk</option>
-            <option value="vad" ${state.settings.voiceActivated ? 'selected' : ''}>Voice Activated</option>
-          </select>
-        </div>
-        <div class="settings-row" id="pttKeyRow" style="display: ${!state.settings.voiceActivated ? 'flex' : 'none'};">
-          <label>Push to Talk Key</label>
-          <button id="pttKeyBtn" onclick="capturePTTKey()" style="padding: 8px 16px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer;">
-            ${state.settings.pushToTalkKey || 'Click to set key'}
-          </button>
-          <input type="hidden" value="${state.settings.pushToTalkKey || ''}" id="pttKey">
-          <small style="color: var(--text-muted); font-size: 11px; margin-left: 8px;">(Works when app is focused)</small>
-        </div>
+    <div class="settings-main">
+      <div class="settings-topbar">
+        <span class="settings-crumb" id="settingsCrumb">User Settings / <b>Account</b></span>
+        <span style="flex:1;"></span>
+        <button class="btn-accent" onclick="saveSettings()">Save changes</button>
+        <button class="modal-close" onclick="closeSettings()" style="margin-left:10px;">✕</button>
       </div>
+      <div class="settings-scroll">
 
-      <div class="settings-section">
-        <h3>Screen Sharing</h3>
-        <div class="settings-row">
-          <label>Default Quality</label>
-          <select id="screenShareQuality" style="flex: 1; max-width: 200px; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-            <option value="720p" ${state.settings.screenShareQuality === '720p' ? 'selected' : ''}>720p HD (Low bandwidth)</option>
-            <option value="1080p" ${!state.settings.screenShareQuality || state.settings.screenShareQuality === '1080p' ? 'selected' : ''}>1080p Full HD (Recommended)</option>
-            <option value="1080p60" ${state.settings.screenShareQuality === '1080p60' ? 'selected' : ''}>1080p 60fps (Gaming)</option>
-            <option value="1440p" ${state.settings.screenShareQuality === '1440p' ? 'selected' : ''}>1440p QHD</option>
-            <option value="1440p60" ${state.settings.screenShareQuality === '1440p60' ? 'selected' : ''}>1440p 60fps</option>
-            <option value="4k" ${state.settings.screenShareQuality === '4k' ? 'selected' : ''}>4K Ultra HD</option>
-            <option value="4k60" ${state.settings.screenShareQuality === '4k60' ? 'selected' : ''}>4K 60fps (Premium)</option>
-            <option value="8k" ${state.settings.screenShareQuality === '8k' ? 'selected' : ''}>8K Ultra HD (Maximum)</option>
-            <option value="source" ${state.settings.screenShareQuality === 'source' ? 'selected' : ''}>Source (Native resolution)</option>
-          </select>
+        <!-- ACCOUNT -->
+        <div class="settings-pane active" id="stab-account">
+          <div class="settings-title">Account</div>
+          <div class="settings-desc">Your identity on this server and how you sign in.</div>
+          <div class="identity-card">
+            <div class="id-avatar">${u.avatar ? `<img src="${u.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : initials}</div>
+            <div class="id-meta">
+              <div class="id-name">${escapeHtml(u.displayName || u.username || 'User')}</div>
+              <div class="id-handle">@${escapeHtml(u.username || 'user')} · ${escapeHtml((u.role || 'member'))}</div>
+            </div>
+            <button class="btn-accent" onclick="switchSettingsTab('profile')">Edit profile</button>
+          </div>
+          <div class="grid-2">
+            <div class="field"><div class="field-label">Email</div><div class="field-value">${escapeHtml(u.email || '—')}</div></div>
+            <div class="field"><div class="field-label">Username</div><div class="field-value mono">${escapeHtml(u.username || '—')}</div></div>
+          </div>
+          ${accent('Security')}
+          <div class="section-card">
+            <div class="card-row"><div class="grow"><div class="row-title">Password</div><div class="row-sub">Sign in credential for this server</div></div><button class="btn-secondary" onclick="showToast('Use your server admin to reset passwords','info')">Change</button></div>
+            <div class="card-row"><div class="grow"><div class="row-title">Two-factor authentication</div><div class="row-sub">Add an extra layer of security</div></div><button class="btn-secondary" onclick="showToast('2FA coming soon','info')">Manage</button></div>
+            <div class="card-row"><div class="grow"><div class="row-title">Active sessions</div><div class="row-sub">Devices currently signed in</div></div><button class="btn-secondary" onclick="disconnect()">Sign out</button></div>
+          </div>
+          ${accent('<span style="color:var(--dnd-c)">Danger zone</span>')}
+          <div class="danger-card">
+            <div class="card-row"><div class="grow"><div class="row-title">Disconnect</div><div class="row-sub">Sign out of this server on this device</div></div><button class="btn-danger-outline" onclick="disconnect()">Disconnect</button></div>
+            <div class="card-row"><div class="grow"><div class="row-title">Delete account</div><div class="row-sub">Permanently remove your account and data</div></div><button class="btn-danger" onclick="showToast('Account deletion must be done by a server admin','warning')">Delete</button></div>
+          </div>
         </div>
-        <p style="color: var(--text-muted); font-size: 11px; margin-top: 8px;">Higher resolutions require more bandwidth and CPU. 4K/8K recommended only with fast connections.</p>
-      </div>
 
-      <div class="settings-section">
-        <h3>Behavior</h3>
-        <div class="settings-row">
-          <label>Minimize to Tray</label>
-          <input type="checkbox" ${state.settings.minimizeToTray ? 'checked' : ''} id="minimizeToTray">
+        <!-- PROFILE -->
+        <div class="settings-pane" id="stab-profile">
+          <div class="settings-title">Profile</div>
+          <div class="settings-desc">How you appear to others across the network.</div>
+          <div class="profile-grid">
+            <div>
+              <div class="field"><div class="field-label">Display name</div><input type="text" id="displayName" value="${escapeHtml(u.displayName || '')}" placeholder="Your name"></div>
+              <div class="field"><div class="field-label">Pronouns</div><input type="text" id="pronouns" value="${escapeHtml(u.pronouns || '')}" placeholder="they/them"></div>
+              <div class="field"><div class="field-label">About me</div><textarea id="aboutMe" rows="3" placeholder="Tell the server about yourself">${escapeHtml(u.about || '')}</textarea></div>
+              <div class="field"><div class="field-label">Custom status</div><input type="text" id="customStatus" value="${escapeHtml(u.customStatus || '')}" placeholder="🎮 Playing Helldivers 2"></div>
+            </div>
+            <div class="profile-preview">
+              <div class="banner"></div>
+              <div class="pp-body">
+                <div class="pp-avatar">${initials}</div>
+                <div style="font-family:var(--font-display);font-weight:700;font-size:17px;margin-top:9px;">${escapeHtml(u.displayName || u.username || 'User')}</div>
+                <div style="font-family:var(--font-mono);font-size:11px;color:var(--ember-light);margin-top:3px;">@${escapeHtml(u.username || 'user')} · ${escapeHtml(u.role || 'member')}</div>
+                <div style="font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;color:var(--txt-5);text-transform:uppercase;margin-top:14px;">Preview</div>
+              </div>
+            </div>
+          </div>
+          ${accent('Connections')}
+          <div class="conn-grid">
+            <div class="conn-card"><div class="conn-tile" style="background:#3D7BFF;">ST</div><div style="flex:1;"><div style="font:600 13.5px var(--font-ui)">Steam</div><div style="font-size:11px;color:var(--txt-4);"><input type="text" id="steamId" value="${escapeHtml(u.steamId || '')}" placeholder="Steam ID" style="background:transparent;border:none;color:var(--txt-2);font-family:var(--font-mono);font-size:12px;padding:0;width:100%;"></div></div></div>
+            <div class="conn-card"><div class="conn-tile" style="background:#B86BFF;">TW</div><div style="flex:1;"><div style="font:600 13.5px var(--font-ui)">Twitch</div><div style="font-size:11px;color:var(--txt-4);">Not connected</div></div><button class="btn-secondary" onclick="showToast('Twitch linking coming soon','info')">Link</button></div>
+          </div>
         </div>
-        <div class="settings-row">
-          <label>Start Minimized</label>
-          <input type="checkbox" ${state.settings.startMinimized ? 'checked' : ''} id="startMinimized">
-        </div>
-      </div>
 
-      <div class="settings-section">
-        <h3>Account</h3>
-        <div class="settings-row">
-          <label>Display Name</label>
-          <input type="text" value="${state.user?.displayName || ''}" id="displayName" style="width: 150px; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
+        <!-- VOICE & VIDEO -->
+        <div class="settings-pane" id="stab-voice">
+          <div class="settings-title">Voice &amp; Video</div>
+          <div class="settings-desc">Devices, input mode, and screen-share quality.</div>
+          <div class="grid-2">
+            <div class="field"><div class="field-label">Input device</div><select id="audioInputDevice"><option value="">Default microphone</option>${audioInputOptions}</select></div>
+            <div class="field"><div class="field-label">Output device</div><select id="audioOutputDevice"><option value="">Default speakers</option>${audioOutputOptions}</select></div>
+            <div class="field"><div class="field-label">Camera</div><select id="cameraDevice"><option value="">Default camera</option>${videoInputOptions}</select></div>
+            <div class="field"><div class="field-label">Screen-share quality</div><select id="screenShareQuality">
+              <option value="720p" ${state.settings.screenShareQuality === '720p' ? 'selected' : ''}>720p HD</option>
+              <option value="1080p" ${!state.settings.screenShareQuality || state.settings.screenShareQuality === '1080p' ? 'selected' : ''}>1080p Full HD</option>
+              <option value="1080p60" ${state.settings.screenShareQuality === '1080p60' ? 'selected' : ''}>1080p 60fps</option>
+              <option value="1440p" ${state.settings.screenShareQuality === '1440p' ? 'selected' : ''}>1440p QHD</option>
+              <option value="1440p60" ${state.settings.screenShareQuality === '1440p60' ? 'selected' : ''}>1440p 60fps</option>
+              <option value="4k" ${state.settings.screenShareQuality === '4k' ? 'selected' : ''}>4K Ultra HD</option>
+              <option value="4k60" ${state.settings.screenShareQuality === '4k60' ? 'selected' : ''}>4K 60fps</option>
+              <option value="8k" ${state.settings.screenShareQuality === '8k' ? 'selected' : ''}>8K</option>
+              <option value="source" ${state.settings.screenShareQuality === 'source' ? 'selected' : ''}>Source</option>
+            </select></div>
+          </div>
+          <div class="section-card pad" style="margin-top:16px;">
+            <div class="row-title">Mic test</div>
+            <div class="row-sub" style="margin-bottom:11px;">Speak and watch the input level. <a onclick="testMicrophone()" style="color:var(--ember-light);cursor:pointer;">Start test</a></div>
+            <div class="mic-meter"><div style="width:64%"></div></div>
+            <div class="vol-row"><span class="vol-label">Input vol</span><input type="range" id="inputVolume" min="0" max="200" value="${state.settings.inputVolume || 100}"><span id="inputVolumeLabel" style="font-family:var(--font-mono);font-size:11px;color:var(--txt-4);width:42px;text-align:right;">${state.settings.inputVolume || 100}%</span></div>
+            <div class="vol-row"><span class="vol-label">Output vol</span><input type="range" id="outputVolume" min="0" max="200" value="${state.settings.outputVolume || 100}"><span id="outputVolumeLabel" style="font-family:var(--font-mono);font-size:11px;color:var(--txt-4);width:42px;text-align:right;">${state.settings.outputVolume || 100}%</span></div>
+          </div>
+          <div class="card-row" style="border-top:1px solid var(--line-1);border-bottom:1px solid var(--line-1);margin-top:10px;">
+            <div class="grow"><div class="row-title">Input mode</div><div class="row-sub">Push-to-talk key: <span style="font-family:var(--font-mono);color:var(--ember-light);background:var(--bg-field);border:1px solid rgba(255,138,61,0.3);border-radius:5px;padding:1px 7px;" id="pttKeyBtn" onclick="capturePTTKey()">${state.settings.pushToTalkKey || 'set key'}</span></div></div>
+            <select id="voiceMode" onchange="togglePTTKeyRow()" style="width:auto;">
+              <option value="vad" ${state.settings.voiceActivated ? 'selected' : ''}>Voice activity</option>
+              <option value="ptt" ${!state.settings.voiceActivated ? 'selected' : ''}>Push to talk</option>
+            </select>
+            <input type="hidden" id="pttKey" value="${state.settings.pushToTalkKey || ''}">
+            <div id="pttKeyRow" style="display:none;"></div>
+          </div>
+          <div id="cameraPreviewContainer" style="display:none;margin-top:14px;background:var(--bg-card);border-radius:12px;overflow:hidden;"><video id="cameraPreview" autoplay playsinline muted style="width:100%;max-height:200px;transform:scaleX(-1);"></video></div>
+          ${window.electronAPI ? `
+          ${accent('Desktop')}
+          <div class="section-card">
+            <div class="card-row"><div class="grow"><div class="row-title">Minimize to tray</div></div><input type="checkbox" id="minimizeToTray" ${state.settings.minimizeToTray ? 'checked' : ''} style="accent-color:var(--ember);width:16px;height:16px;"></div>
+            <div class="card-row"><div class="grow"><div class="row-title">Start minimized</div></div><input type="checkbox" id="startMinimized" ${state.settings.startMinimized ? 'checked' : ''} style="accent-color:var(--ember);width:16px;height:16px;"></div>
+          </div>` : ''}
         </div>
-        <div class="settings-row">
-          <label>Steam ID</label>
-          <input type="text" value="${state.user?.steamId || ''}" id="steamId" style="width: 150px; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-        </div>
-      </div>
 
-      ${state.user?.role === 'admin' || state.user?.role === 'superadmin' ? `
-      <div class="settings-section">
-        <h3>Administration</h3>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <button class="btn-secondary" onclick="openInviteModal()">Create Invite</button>
-          <button class="btn-secondary" onclick="openCreateUserModal()">Create User</button>
-          <button class="btn-secondary" onclick="openAdminPanel()">Manage Users</button>
-          <button class="btn-secondary" onclick="openGroupsModal()">Groups</button>
-          <button class="btn-secondary" onclick="openFederationModal()">Federation</button>
+        <!-- NOTIFICATIONS -->
+        <div class="settings-pane" id="stab-notifications">
+          <div class="settings-title">Notifications</div>
+          <div class="settings-desc">Choose what reaches you, and how.</div>
+          ${accent('Notify me about')}
+          <div class="section-card">
+            ${toggleRow('Direct messages', 'Private 1:1 conversations', true)}
+            ${toggleRow('@mentions', 'When someone pings you', true)}
+            ${toggleRow('All messages', 'Every message in every channel', false)}
+            ${toggleRow('Voice activity', 'When friends join voice', true)}
+            ${toggleRow('Server events', 'Joins, role changes, etc.', false)}
+            ${toggleRow('Bot embeds', 'Watch-together and media bots', true)}
+          </div>
+          ${accent('Delivery')}
+          <div class="section-card">
+            ${toggleRow('Desktop notifications', '', true)}
+            ${toggleRow('Notification sounds', '', true)}
+            ${toggleRow('Mobile push', '', true)}
+            ${toggleRow('Quiet hours', '10pm – 8am', false)}
+          </div>
         </div>
-        <h4 style="margin-top: 16px; color: var(--text-muted);">Media Bots</h4>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
-          <button class="btn-secondary" onclick="openAdminBotModal('youtube')">YouTube</button>
-          <button class="btn-secondary" onclick="openAdminBotModal('plex')">Plex</button>
-          <button class="btn-secondary" onclick="openAdminBotModal('emby')">Emby</button>
-          <button class="btn-secondary" onclick="openAdminBotModal('jellyfin')">Jellyfin</button>
-          <button class="btn-secondary" onclick="openAdminBotModal('spotify')">Spotify</button>
-          <button class="btn-secondary" onclick="openAdminBotModal('iptv')">IPTV</button>
-          <button class="btn-secondary" onclick="openAdminBotModal('chrome')">Chrome</button>
-          <button class="btn-secondary" onclick="openAdminBotModal('twitch')">Twitch</button>
-          <button class="btn-secondary" onclick="openAdminBotModal('imagesearch')">Image Search</button>
+
+        <!-- APPEARANCE -->
+        <div class="settings-pane" id="stab-appearance">
+          <div class="settings-title">Appearance</div>
+          <div class="settings-desc">Ember is dark by nature — tune the shade and the accent.</div>
+          ${accent('Theme')}
+          <div class="theme-grid">
+            <div class="theme-card ${state.theme === 'dark' ? 'active' : ''}" onclick="setTheme('dark'); refreshThemeCards();" data-theme="dark"><div class="swatch" style="background:#0C0B0A;"><span class="dot"></span><span class="bar"></span></div><div class="t-name">Ember Dark</div><div class="t-sub">Warm near-black</div></div>
+            <div class="theme-card ${state.theme === 'midnight' ? 'active' : ''}" onclick="setTheme('midnight'); refreshThemeCards();" data-theme="midnight"><div class="swatch" style="background:#0d1016;"><span class="dot"></span><span class="bar"></span></div><div class="t-name">Midnight</div><div class="t-sub">Cool blue-black</div></div>
+            <div class="theme-card ${state.theme === 'amoled' ? 'active' : ''}" onclick="setTheme('amoled'); refreshThemeCards();" data-theme="amoled"><div class="swatch" style="background:#000;"><span class="dot"></span><span class="bar"></span></div><div class="t-name">AMOLED</div><div class="t-sub">Pure black</div></div>
+          </div>
+          <div class="card-row" style="border-top:1px solid var(--line-1);border-bottom:1px solid var(--line-1);">
+            <div class="grow"><div class="row-title">Accent color</div><div class="row-sub">Drives buttons, active states, and the ember glow</div></div>
+            <div class="accent-swatches">
+              <span class="active" style="background:#FF6A2B;"></span><span style="background:#FF8A3D;"></span><span style="background:#E8551F;"></span><span style="background:#FFB454;"></span><span style="background:#FF3D3D;"></span>
+            </div>
+          </div>
+          <div class="card-row" style="border-bottom:1px solid var(--line-1);">
+            <div class="grow"><div class="row-title">Message density</div><div class="row-sub">Compact mirrors the classic IRC log</div></div>
+            <div class="segmented"><span onclick="this.parentElement.querySelectorAll('span').forEach(s=>s.classList.remove('active'));this.classList.add('active')">Cozy</span><span class="active" onclick="this.parentElement.querySelectorAll('span').forEach(s=>s.classList.remove('active'));this.classList.add('active')">Compact</span></div>
+          </div>
+          ${accent('Display')}
+          <div class="section-card">
+            ${toggleRow('24-hour timestamps', '', true)}
+            ${toggleRow('Show avatars', '', true)}
+            ${toggleRow('Reduce motion', '', false)}
+            ${toggleRow('Underline links', '', false)}
+          </div>
         </div>
-        <h4 style="margin-top: 16px; color: var(--text-muted);">Gaming Bots</h4>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
-          <button class="btn-secondary" onclick="openAdminBotModal('rpg')">RPG Bot</button>
+
+        <!-- MEDIA BOTS -->
+        <div class="settings-pane" id="stab-bots">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:4px;">
+            <div class="settings-title">8 built-in bots <span style="color:var(--txt-4);font-weight:400;font-size:15px;">· no subscriptions</span></div>
+            <div style="font-family:var(--font-mono);font-size:11px;color:var(--on);">${enabledCount} enabled</div>
+          </div>
+          <div class="settings-desc">Enable a bot, set permissions per group, and toggle availability per channel.</div>
+          <div class="bots-grid">
+            ${bots.map(b => `
+              <div class="bot-card ${b.on ? 'enabled' : ''}">
+                <div class="bot-head">
+                  <div class="bot-tile" style="background:${b.color};">${b.letter}</div>
+                  <div style="flex:1;min-width:0;"><div class="bot-name">${b.name}</div><div class="bot-cat">${b.cat}</div></div>
+                  <div class="toggle ${b.on ? 'on' : ''}" onclick="this.classList.toggle('on')"><span class="knob"></span></div>
+                </div>
+                <div class="bot-desc">${b.desc}</div>
+                <div class="bot-foot">
+                  <span class="bot-status ${b.on ? 'on' : ''}">${b.on ? '● enabled' : '○ disabled'}</span>
+                  <span class="bot-config" onclick="${isAdmin ? `openAdminBotModal('${b.id}')` : `showToast('Only admins can configure bots','info')`}">Configure →</span>
+                </div>
+              </div>`).join('')}
+          </div>
         </div>
-        <h4 style="margin-top: 16px; color: var(--text-muted);">Utility Bots</h4>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
-          <button class="btn-secondary" onclick="openAdminBotModal('activitystats')">Activity Stats</button>
+
+        <!-- GROUPS & ROLES -->
+        <div class="settings-pane" id="stab-groups">
+          <div class="settings-title">Groups &amp; Roles</div>
+          <div class="settings-desc">Define roles and what each can do on this server.</div>
+          <div class="roles-grid">
+            <div class="role-list">
+              ${roles.map((r, i) => `<div class="role-item ${i === 0 ? 'active' : ''}"><span class="role-dot" style="background:${r.color};"></span><span class="role-name">${r.name}</span><span class="role-count">${r.count}</span></div>`).join('')}
+              <button class="btn-secondary" style="margin-top:6px;" onclick="${isAdmin ? 'openGroupsModal()' : `showToast('Only admins can manage roles','info')`}">+ Manage roles</button>
+            </div>
+            <div class="section-card pad">
+              <div class="row-title" style="margin-bottom:10px;">Permissions</div>
+              ${toggleRow('Manage server', '', true)}
+              ${toggleRow('Manage channels', '', true)}
+              ${toggleRow('Kick members', '', true)}
+              ${toggleRow('Ban members', '', true)}
+              ${toggleRow('Manage messages', '', true)}
+              ${toggleRow('Mute / move in voice', '', true)}
+            </div>
+          </div>
         </div>
+
+        <!-- FEDERATION -->
+        <div class="settings-pane" id="stab-federation">
+          <div class="settings-title">Federation</div>
+          <div class="settings-desc">Link servers into an Ember network with real-time sync.</div>
+          <div class="section-card pad">
+            <div class="row-title" style="margin-bottom:6px;">Linked servers</div>
+            <div class="row-sub" style="margin-bottom:12px;">Manage which servers share channels, presence and messages.</div>
+            <button class="btn-accent" onclick="${isAdmin ? 'openFederationModal()' : `showToast('Only admins can manage federation','info')`}">Open federation manager</button>
+          </div>
+          ${accent('Trust &amp; sync')}
+          <div class="section-card">
+            ${toggleRow('Auto-accept sync', 'Trust linked servers automatically', true)}
+            ${toggleRow('Share presence', 'Show your status network-wide', true)}
+            ${toggleRow('Federated voice', 'Allow cross-server voice rooms', false)}
+          </div>
+        </div>
+
+        <!-- CHANNELS -->
+        <div class="settings-pane" id="stab-channels">
+          <div class="settings-title">Channels</div>
+          <div class="settings-desc">Create and organize text, voice and watch channels.</div>
+          <div class="section-card pad">
+            <div class="row-title" style="margin-bottom:6px;">Channel management</div>
+            <div class="row-sub" style="margin-bottom:12px;">Add categories and channels, reorder, and set per-channel options.</div>
+            <button class="btn-accent" onclick="${isAdmin ? 'openCreateChannelModal()' : `showToast('Only admins can manage channels','info')`}">+ Create channel</button>
+          </div>
+          <div class="section-card" id="settingsChannelList"></div>
+        </div>
+
+        <!-- SERVER SETTINGS -->
+        <div class="settings-pane" id="stab-server">
+          <div class="settings-title">Server Settings</div>
+          <div class="settings-desc">Identity, invites and maintenance for this server.</div>
+          <div class="grid-2">
+            <div class="field"><div class="field-label">Server name</div><div class="field-value">${escapeHtml(state.servers.find(s => s.id === state.currentServerId)?.name || 'F7Lans')}</div></div>
+            <div class="field"><div class="field-label">Version</div><div class="field-value mono">v1.0.0</div></div>
+          </div>
+          ${accent('Invites')}
+          <div class="section-card pad">
+            <div class="row-title" style="margin-bottom:6px;">Invite people</div>
+            <div class="row-sub" style="margin-bottom:12px;">Generate an invite link or code for new members.</div>
+            <button class="btn-accent" onclick="${isAdmin ? 'openInviteModal()' : `showToast('Only admins can create invites','info')`}">Create invite</button>
+            ${isAdmin ? `<button class="btn-secondary" style="margin-left:8px;" onclick="openCreateUserModal()">Create user</button><button class="btn-secondary" style="margin-left:8px;" onclick="openAdminPanel()">Manage users</button>` : ''}
+          </div>
+          ${accent('<span style="color:var(--dnd-c)">Danger zone</span>')}
+          <div class="danger-card">
+            <div class="card-row"><div class="grow"><div class="row-title">Restart server stack</div><div class="row-sub">Handled by your deployer / host</div></div><button class="btn-danger-outline" onclick="showToast('Restart from your host (docker compose restart)','info')">Info</button></div>
+          </div>
+        </div>
+
       </div>
-      ` : ''}
-    </div>
-    <div class="modal-footer">
-      <button class="btn-danger" onclick="disconnect()">Disconnect</button>
-      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn-primary" onclick="saveSettings()">Save</button>
     </div>
   `;
 
-  // Set up volume label updates
-  document.getElementById('inputVolume').addEventListener('input', (e) => {
-    document.getElementById('inputVolumeLabel').textContent = e.target.value + '%';
-  });
-  document.getElementById('outputVolume').addEventListener('input', (e) => {
-    document.getElementById('outputVolumeLabel').textContent = e.target.value + '%';
-  });
+  document.body.appendChild(takeover);
 
-  modal.classList.add('active');
+  // Volume label updates
+  const inV = document.getElementById('inputVolume');
+  const outV = document.getElementById('outputVolume');
+  inV?.addEventListener('input', (e) => { document.getElementById('inputVolumeLabel').textContent = e.target.value + '%'; });
+  outV?.addEventListener('input', (e) => { document.getElementById('outputVolumeLabel').textContent = e.target.value + '%'; });
+
+  // Populate the channels list inside settings
+  renderSettingsChannelList();
+}
+
+// Switch the active settings panel
+const SETTINGS_META = {
+  account: ['User Settings', 'Account'], profile: ['User Settings', 'Profile'],
+  voice: ['User Settings', 'Voice & Video'], notifications: ['User Settings', 'Notifications'],
+  appearance: ['User Settings', 'Appearance'], bots: ['Server', 'Media Bots'],
+  groups: ['Server', 'Groups & Roles'], federation: ['Server', 'Federation'],
+  channels: ['Server', 'Channels'], server: ['Server', 'Server Settings'],
+};
+function switchSettingsTab(tab) {
+  document.querySelectorAll('.settings-pane').forEach(p => p.classList.toggle('active', p.id === `stab-${tab}`));
+  document.querySelectorAll('.settings-nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  const crumb = document.getElementById('settingsCrumb');
+  const meta = SETTINGS_META[tab];
+  if (crumb && meta) crumb.innerHTML = `${meta[0]} / <b>${meta[1]}</b>`;
+  const scroll = document.querySelector('.settings-scroll');
+  if (scroll) scroll.scrollTop = 0;
+}
+function closeSettings() {
+  document.querySelector('.settings-takeover')?.remove();
+}
+function refreshThemeCards() {
+  document.querySelectorAll('.theme-card').forEach(c => c.classList.toggle('active', c.dataset.theme === state.theme));
+}
+function renderSettingsChannelList() {
+  const el = document.getElementById('settingsChannelList');
+  if (!el) return;
+  const chans = state.channels || [];
+  if (!chans.length) { el.innerHTML = '<div class="card-row"><div class="row-sub">No channels yet.</div></div>'; return; }
+  el.innerHTML = chans.map(c => {
+    const isVoice = ['voice', 'video'].includes(c.type);
+    return `<div class="card-row"><span style="color:var(--txt-5);width:18px;text-align:center;font-family:var(--font-mono);">${isVoice ? '🔊' : '#'}</span><div class="grow"><div class="row-title" style="font-family:var(--font-mono);font-size:13px;">${escapeHtml(c.name)}</div></div><span class="row-sub">${escapeHtml(c.category || 'General')}</span></div>`;
+  }).join('');
 }
 
 // Enumerate available media devices
@@ -1955,11 +3000,14 @@ async function saveSettings() {
     voiceActivated: document.getElementById('voiceMode').value === 'vad',
     pushToTalkKey: document.getElementById('pttKey').value,
     // Screen sharing settings
-    screenShareQuality: document.getElementById('screenShareQuality').value,
-    // Behavior settings
-    minimizeToTray: document.getElementById('minimizeToTray').checked,
-    startMinimized: document.getElementById('startMinimized').checked
+    screenShareQuality: document.getElementById('screenShareQuality').value
   };
+
+  // Electron-only behavior settings
+  if (window.electronAPI) {
+    newSettings.minimizeToTray = document.getElementById('minimizeToTray')?.checked || false;
+    newSettings.startMinimized = document.getElementById('startMinimized')?.checked || false;
+  }
 
   state.settings = { ...state.settings, ...newSettings };
 
@@ -1968,8 +3016,16 @@ async function saveSettings() {
   }
 
   // Save profile updates
-  const displayName = document.getElementById('displayName').value;
-  const steamId = document.getElementById('steamId').value;
+  const displayName = document.getElementById('displayName')?.value ?? state.user?.displayName ?? '';
+  const steamId = document.getElementById('steamId')?.value ?? state.user?.steamId ?? '';
+  const pronouns = document.getElementById('pronouns')?.value;
+  const about = document.getElementById('aboutMe')?.value;
+  const customStatus = document.getElementById('customStatus')?.value;
+
+  const profileBody = { displayName, steamId };
+  if (pronouns !== undefined) profileBody.pronouns = pronouns;
+  if (about !== undefined) profileBody.about = about;
+  if (customStatus !== undefined) profileBody.customStatus = customStatus;
 
   try {
     await fetch(`${state.serverUrl}/api/auth/profile`, {
@@ -1978,18 +3034,31 @@ async function saveSettings() {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${state.token}`
       },
-      body: JSON.stringify({ displayName, steamId })
+      body: JSON.stringify(profileBody)
     });
 
-    state.user.displayName = displayName;
-    state.user.steamId = steamId;
+    if (state.user) {
+      state.user.displayName = displayName;
+      state.user.steamId = steamId;
+      if (pronouns !== undefined) state.user.pronouns = pronouns;
+      if (about !== undefined) state.user.about = about;
+      if (customStatus !== undefined) state.user.customStatus = customStatus;
+    }
   } catch (error) {
     console.error('Failed to update profile:', error);
   }
 
+  closeSettings();
   closeModal();
   showToast('Settings saved', 'success');
   renderMainApp();
+  renderChannels();
+  loadDMConversations();
+
+  // Re-select current channel to restore messages
+  if (state.currentChannel) {
+    selectChannel(state.currentChannel);
+  }
 }
 
 // Capture a key for PTT
@@ -2025,7 +3094,7 @@ function openInviteModal() {
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Create Invite</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
@@ -2093,7 +3162,7 @@ function openCreateUserModal() {
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Create User</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
@@ -2164,7 +3233,7 @@ async function openAdminPanel() {
   modal.innerHTML = `
     <div class="modal-header">
       <h2>User Management</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
       <div id="adminUserList">Loading users...</div>
@@ -2235,13 +3304,14 @@ async function updateUserRole(userId, role) {
 
 // YouTube Bot Modal
 async function openYouTubeBotModal() {
+  const prevModal = state.previousModal; // Preserve for refresh
   const overlay = document.getElementById('modalOverlay');
   const modal = document.getElementById('modalContent');
 
   modal.innerHTML = `
     <div class="modal-header">
       <h2>YouTube Bot</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div id="youtubeBotContent">Loading...</div>
@@ -2252,6 +3322,7 @@ async function openYouTubeBotModal() {
   `;
 
   overlay.classList.add('active');
+  if (prevModal) state.previousModal = prevModal; // Restore for refresh
 
   // Load bot status
   try {
@@ -2300,7 +3371,7 @@ function renderYouTubeBotContent(data) {
         <div style="display: flex; gap: 8px; align-items: center;">
           <label style="min-width: 80px;">Channel:</label>
           <select id="ytBotChannel" style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-            ${state.channels.filter(c => c.type === 'voice').map(c => `
+            ${state.channels.filter(c => c.type === 'voice' || c.type === 'video').map(c => `
               <option value="${c._id}">${escapeHtml(c.name)}</option>
             `).join('')}
           </select>
@@ -2478,13 +3549,14 @@ async function stopAllYouTubeStreams() {
 
 // ==================== Plex Bot Modal ====================
 async function openPlexBotModal() {
+  const prevModal = state.previousModal;
   const overlay = document.getElementById('modalOverlay');
   const modal = document.getElementById('modalContent');
 
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Plex Bot</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div id="plexBotContent">Loading...</div>
@@ -2495,6 +3567,7 @@ async function openPlexBotModal() {
   `;
 
   overlay.classList.add('active');
+  if (prevModal) state.previousModal = prevModal;
 
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/plex-bot/status`, {
@@ -2573,7 +3646,7 @@ function renderPlexBotContent(data) {
         <div style="display: flex; gap: 8px; align-items: center;">
           <label style="min-width: 80px;">Channel:</label>
           <select id="plexBotChannel" style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-            ${state.channels.filter(c => c.type === 'voice').map(c => `
+            ${state.channels.filter(c => c.type === 'voice' || c.type === 'video').map(c => `
               <option value="${c._id}">${escapeHtml(c.name)}</option>
             `).join('')}
           </select>
@@ -2787,7 +3860,7 @@ async function openFederationModal() {
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Federation</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body" style="max-height: 500px; overflow-y: auto;">
       <div id="federationContent">Loading...</div>
@@ -3039,13 +4112,14 @@ async function kickUserFromChannel(userId, channelId) {
 
 // ==================== Emby Bot Modal ====================
 async function openEmbyBotModal() {
+  const prevModal = state.previousModal;
   const overlay = document.getElementById('modalOverlay');
   const modal = document.getElementById('modalContent');
 
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Emby Bot</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div id="embyBotContent">Loading...</div>
@@ -3056,6 +4130,7 @@ async function openEmbyBotModal() {
   `;
 
   overlay.classList.add('active');
+  if (prevModal) state.previousModal = prevModal;
 
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/emby-bot/status`, {
@@ -3071,13 +4146,14 @@ async function openEmbyBotModal() {
 
 // ==================== Jellyfin Bot Modal ====================
 async function openJellyfinBotModal() {
+  const prevModal = state.previousModal;
   const overlay = document.getElementById('modalOverlay');
   const modal = document.getElementById('modalContent');
 
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Jellyfin Bot</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div id="jellyfinBotContent">Loading...</div>
@@ -3088,6 +4164,7 @@ async function openJellyfinBotModal() {
   `;
 
   overlay.classList.add('active');
+  if (prevModal) state.previousModal = prevModal;
 
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/jellyfin-bot/status`, {
@@ -3139,7 +4216,7 @@ function renderMediaBotContent(botType, data) {
       <h3>Play Media</h3>
       <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
         <select id="${botType}Channel" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          ${state.channels.filter(c => c.type === 'voice').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
+          ${state.channels.filter(c => c.type === 'voice' || c.type === 'video').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
         </select>
         <div style="display: flex; gap: 8px;">
           <input type="text" id="${botType}Search" placeholder="Search..." style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
@@ -3276,13 +4353,14 @@ async function stopMediaBot(botType, channelId) {
 
 // ==================== Chrome Bot Modal ====================
 async function openChromeBotModal() {
+  const prevModal = state.previousModal; // Preserve for refresh
   const overlay = document.getElementById('modalOverlay');
   const modal = document.getElementById('modalContent');
 
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Chrome Bot (Shared Browser)</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div id="chromeBotContent">Loading...</div>
@@ -3293,6 +4371,7 @@ async function openChromeBotModal() {
   `;
 
   overlay.classList.add('active');
+  if (prevModal) state.previousModal = prevModal; // Restore for navigation
 
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/chrome-bot/status`, {
@@ -3340,7 +4419,7 @@ function renderChromeBotContent(data) {
       <h3>Start Session</h3>
       <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
         <select id="chromeChannel" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          ${state.channels.filter(c => c.type === 'voice').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
+          ${state.channels.filter(c => c.type === 'voice' || c.type === 'video').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
         </select>
         <input type="text" id="chromeStartUrl" value="https://google.com" placeholder="Starting URL" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
         <button class="btn-primary" onclick="startChromeSession()">Start Browser Session</button>
@@ -3379,8 +4458,11 @@ async function toggleChromeSafeSearch(enabled) {
   }
 }
 
-async function saveChromeBotSettings() {
-  const blockedDomains = document.getElementById('chromeBlockedDomains').value
+async function saveChromeBotSettings(silent = false) {
+  const blockedDomainsEl = document.getElementById('chromeBlockedDomains');
+  if (!blockedDomainsEl) return; // Element doesn't exist, nothing to save
+
+  const blockedDomains = blockedDomainsEl.value
     .split('\n')
     .map(d => d.trim())
     .filter(d => d.length > 0);
@@ -3392,13 +4474,14 @@ async function saveChromeBotSettings() {
       body: JSON.stringify({ blockedDomains })
     });
     if (!response.ok) throw new Error((await response.json()).error);
-    showToast('Chrome bot settings saved', 'success');
+    if (!silent) showToast('Chrome bot settings saved', 'success');
   } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
+    if (!silent) showToast('Failed: ' + error.message, 'error');
   }
 }
 
 async function toggleChromeBot(enabled) {
+  const prevModal = state.previousModal; // Preserve previous modal state
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/chrome-bot/enable`, {
       method: 'POST',
@@ -3409,6 +4492,7 @@ async function toggleChromeBot(enabled) {
     if (!response.ok) throw new Error(result.error);
     showToast(result.message, 'success');
     openChromeBotModal();
+    state.previousModal = prevModal; // Restore previous modal state
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
@@ -3417,6 +4501,7 @@ async function toggleChromeBot(enabled) {
 async function startChromeSession() {
   const channelId = document.getElementById('chromeChannel').value;
   const url = document.getElementById('chromeStartUrl').value.trim();
+  const prevModal = state.previousModal;
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/chrome-bot/start`, {
       method: 'POST',
@@ -3427,12 +4512,14 @@ async function startChromeSession() {
     if (!response.ok) throw new Error(result.error);
     showToast('Browser session started', 'success');
     openChromeBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
 }
 
 async function stopChromeSession(channelId) {
+  const prevModal = state.previousModal;
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/chrome-bot/stop`, {
       method: 'POST',
@@ -3442,6 +4529,7 @@ async function stopChromeSession(channelId) {
     if (!response.ok) throw new Error((await response.json()).error);
     showToast('Session stopped', 'success');
     openChromeBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
@@ -3449,13 +4537,14 @@ async function stopChromeSession(channelId) {
 
 // ==================== IPTV Bot Modal ====================
 async function openIPTVBotModal() {
+  const prevModal = state.previousModal; // Preserve for refresh
   const overlay = document.getElementById('modalOverlay');
   const modal = document.getElementById('modalContent');
 
   modal.innerHTML = `
     <div class="modal-header">
       <h2>IPTV Bot</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body" style="max-height: 500px; overflow-y: auto;">
       <div id="iptvBotContent">Loading...</div>
@@ -3466,6 +4555,7 @@ async function openIPTVBotModal() {
   `;
 
   overlay.classList.add('active');
+  if (prevModal) state.previousModal = prevModal; // Restore for navigation
 
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/status`, {
@@ -3494,8 +4584,15 @@ function renderIPTVBotContent(data) {
     <div class="settings-section" style="margin-bottom: 16px;">
       <h3>Configure IPTV</h3>
       <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-        <input type="text" id="iptvPlaylistUrl" placeholder="M3U Playlist URL" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-        <input type="text" id="iptvEpgUrl" placeholder="EPG/XMLTV URL (optional)" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
+        <div>
+          <label style="display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">M3U/M3U8 Playlist File</label>
+          <input type="file" id="iptvPlaylistFile" accept=".m3u,.m3u8" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary); width: 100%;">
+          <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Upload your M3U/M3U8 playlist file</p>
+        </div>
+        <div>
+          <label style="display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">EPG/XMLTV URL (optional)</label>
+          <input type="text" id="iptvEpgUrl" placeholder="https://example.com/epg.xml" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary); width: 100%;">
+        </div>
         <button class="btn-primary" onclick="configureIPTV()">Load Playlist</button>
       </div>
     </div>
@@ -3505,7 +4602,7 @@ function renderIPTVBotContent(data) {
       <h3>Watch TV</h3>
       <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
         <select id="iptvVoiceChannel" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          ${state.channels.filter(c => c.type === 'voice').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
+          ${state.channels.filter(c => c.type === 'voice' || c.type === 'video').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
         </select>
         <button class="btn-secondary" onclick="loadIPTVChannels()">Load Channel Guide</button>
         <div id="iptvChannelList" style="max-height: 200px; overflow-y: auto;"></div>
@@ -3537,6 +4634,7 @@ function renderIPTVBotContent(data) {
 }
 
 async function toggleIPTVBot(enabled) {
+  const prevModal = state.previousModal;
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/enable`, {
       method: 'POST',
@@ -3547,25 +4645,40 @@ async function toggleIPTVBot(enabled) {
     if (!response.ok) throw new Error(result.error);
     showToast(result.message, 'success');
     openIPTVBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
 }
 
 async function configureIPTV() {
-  const playlistUrl = document.getElementById('iptvPlaylistUrl').value.trim();
+  const fileInput = document.getElementById('iptvPlaylistFile');
   const epgUrl = document.getElementById('iptvEpgUrl').value.trim();
-  if (!playlistUrl) { showToast('Playlist URL required', 'error'); return; }
+
+  if (!fileInput.files || fileInput.files.length === 0) {
+    showToast('Please select an M3U playlist file', 'error');
+    return;
+  }
+
+  const file = fileInput.files[0];
+  const formData = new FormData();
+  formData.append('playlist', file);
+  if (epgUrl) {
+    formData.append('epgUrl', epgUrl);
+  }
+
+  const prevModal = state.previousModal;
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/configure`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ playlistUrl, epgUrl: epgUrl || undefined })
+      headers: { 'Authorization': `Bearer ${state.token}` },
+      body: formData
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
     showToast(`Loaded ${result.channelCount} channels`, 'success');
     openIPTVBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
@@ -3594,6 +4707,7 @@ async function loadIPTVChannels() {
 
 async function playIPTV(iptvChannelId) {
   const voiceChannelId = document.getElementById('iptvVoiceChannel').value;
+  const prevModal = state.previousModal;
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/play`, {
       method: 'POST',
@@ -3604,12 +4718,14 @@ async function playIPTV(iptvChannelId) {
     if (!response.ok) throw new Error(result.error);
     showToast(`Now watching: ${result.channel}`, 'success');
     openIPTVBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
 }
 
 async function stopIPTV(voiceChannelId) {
+  const prevModal = state.previousModal;
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/stop`, {
       method: 'POST',
@@ -3619,6 +4735,7 @@ async function stopIPTV(voiceChannelId) {
     if (!response.ok) throw new Error((await response.json()).error);
     showToast('Stopped', 'success');
     openIPTVBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
@@ -3645,258 +4762,227 @@ async function loadIPTVRecordings() {
   }
 }
 
-// ==================== Spotify Bot Modal ====================
-async function openSpotifyBotModal() {
+// ==================== Channel Management Modals ====================
+
+// Open create channel modal
+function openCreateChannelModal() {
   const overlay = document.getElementById('modalOverlay');
   const modal = document.getElementById('modalContent');
 
   modal.innerHTML = `
     <div class="modal-header">
-      <h2>Spotify Bot</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <h2>Create Channel</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
-    <div class="modal-body" style="max-height: 500px; overflow-y: auto;">
-      <div id="spotifyBotContent">Loading...</div>
+    <div class="modal-body">
+      <div class="settings-section">
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <div>
+            <label style="display: block; margin-bottom: 4px; color: var(--text-muted); font-size: 12px;">Channel Name</label>
+            <input type="text" id="newChannelName" placeholder="general-chat" style="width: 100%; padding: 10px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
+          </div>
+          <div>
+            <label style="display: block; margin-bottom: 4px; color: var(--text-muted); font-size: 12px;">Channel Type</label>
+            <select id="newChannelType" style="width: 100%; padding: 10px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
+              <option value="text">Text Channel</option>
+              <option value="voice">Voice Channel</option>
+              <option value="video">Video Channel</option>
+              <option value="announcement">Announcement</option>
+            </select>
+          </div>
+          <div>
+            <label style="display: block; margin-bottom: 4px; color: var(--text-muted); font-size: 12px;">Category</label>
+            <input type="text" id="newChannelCategory" placeholder="Text Channels" value="Text Channels" style="width: 100%; padding: 10px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
+          </div>
+          <div>
+            <label style="display: block; margin-bottom: 4px; color: var(--text-muted); font-size: 12px;">Topic/Description</label>
+            <input type="text" id="newChannelDescription" placeholder="What's this channel about?" style="width: 100%; padding: 10px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
+          </div>
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModal()">Close</button>
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="createChannel()">Create Channel</button>
     </div>
   `;
 
   overlay.classList.add('active');
+}
+
+// Create a new channel
+async function createChannel() {
+  const name = document.getElementById('newChannelName').value.trim();
+  const type = document.getElementById('newChannelType').value;
+  const category = document.getElementById('newChannelCategory').value.trim() || 'General';
+  const description = document.getElementById('newChannelDescription').value.trim();
+
+  if (!name) {
+    showToast('Please enter a channel name', 'warning');
+    return;
+  }
 
   try {
-    const response = await fetch(`${state.serverUrl}/api/admin/spotify-bot/status`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
+    const response = await fetch(`${state.serverUrl}/api/channels`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.token}`
+      },
+      body: JSON.stringify({ name, type, category, description })
     });
+
     const data = await response.json();
     if (!response.ok) throw new Error(data.error);
-    renderSpotifyBotContent(data);
+
+    showToast(`Channel #${data.channel.name} created!`, 'success');
+    closeModal();
+
+    // Refresh channels
+    await loadChannels();
   } catch (error) {
-    document.getElementById('spotifyBotContent').innerHTML = `<p style="color: var(--danger);">Failed to load: ${error.message}</p>`;
+    showToast('Failed: ' + error.message, 'error');
   }
 }
 
-function renderSpotifyBotContent(data) {
-  const { enabled, configured, connected, user, activeStreams } = data;
-  document.getElementById('spotifyBotContent').innerHTML = `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Bot Status</h3>
-      <div style="display: flex; align-items: center; gap: 16px; margin-top: 12px;">
-        <span style="color: ${enabled ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">${enabled ? 'Enabled' : 'Disabled'}</span>
-        <span style="color: ${connected ? 'var(--success)' : 'var(--text-muted)'};">${connected ? 'Connected' : 'Not Connected'}</span>
-        <button class="btn-${enabled ? 'danger' : 'primary'}" onclick="toggleSpotifyBot(${!enabled})">${enabled ? 'Disable' : 'Enable'}</button>
-      </div>
-    </div>
+// Open edit channel modal
+async function openEditChannelModal(channelId) {
+  const channel = state.channels.find(c => c._id === channelId);
+  if (!channel) {
+    showToast('Channel not found', 'error');
+    return;
+  }
 
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Spotify Account</h3>
-      ${connected && user ? `
-        <div style="display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-top: 12px;">
-          ${user.image ? `<img src="${user.image}" style="width: 48px; height: 48px; border-radius: 50%;">` : ''}
+  const overlay = document.getElementById('modalOverlay');
+  const modal = document.getElementById('modalContent');
+
+  modal.innerHTML = `
+    <div class="modal-header">
+      <h2>Edit Channel</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="settings-section">
+        <div style="display: flex; flex-direction: column; gap: 12px;">
           <div>
-            <div style="font-weight: 600;">${escapeHtml(user.name || 'Spotify User')}</div>
-            <div style="font-size: 12px; color: var(--text-muted);">${user.premium ? 'Premium' : 'Free'} Account</div>
+            <label style="display: block; margin-bottom: 4px; color: var(--text-muted); font-size: 12px;">Channel Name</label>
+            <input type="text" id="editChannelName" value="${escapeHtml(channel.name)}" style="width: 100%; padding: 10px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
+          </div>
+          <div>
+            <label style="display: block; margin-bottom: 4px; color: var(--text-muted); font-size: 12px;">Topic/Description</label>
+            <input type="text" id="editChannelDescription" value="${escapeHtml(channel.description || '')}" placeholder="Set a topic for this channel" style="width: 100%; padding: 10px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
+          </div>
+          <div>
+            <label style="display: block; margin-bottom: 4px; color: var(--text-muted); font-size: 12px;">Category</label>
+            <input type="text" id="editChannelCategory" value="${escapeHtml(channel.category || 'General')}" style="width: 100%; padding: 10px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
           </div>
         </div>
-        <button class="btn-danger" onclick="disconnectSpotify()" style="margin-top: 8px;">Disconnect</button>
-      ` : !configured ? `
-        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-          <p style="color: var(--text-muted); font-size: 12px;">Enter your Spotify API credentials from developer.spotify.com</p>
-          <input type="text" id="spotifyClientId" placeholder="Client ID" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          <input type="password" id="spotifyClientSecret" placeholder="Client Secret" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          <button class="btn-primary" onclick="configureSpotify()">Configure</button>
-        </div>
-      ` : `
-        <div style="margin-top: 12px;">
-          <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 8px;">Click below to authorize with Spotify</p>
-          <button class="btn-primary" onclick="authorizeSpotify()">Connect to Spotify</button>
-        </div>
-      `}
-    </div>
-
-    ${enabled && connected ? `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Play Music</h3>
-      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-        <select id="spotifyChannel" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          ${state.channels.filter(c => c.type === 'voice').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
-        </select>
-        <div style="display: flex; gap: 8px;">
-          <input type="text" id="spotifySearch" placeholder="Search tracks, albums, playlists..." style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          <button class="btn-secondary" onclick="searchSpotify()">Search</button>
-        </div>
-        <div id="spotifyResults" style="max-height: 200px; overflow-y: auto;"></div>
+      </div>
+      <div class="settings-section" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--bg-light);">
+        <h3 style="color: var(--danger);">Danger Zone</h3>
+        <button class="btn-danger" onclick="deleteChannel('${channelId}')" style="margin-top: 8px;">Delete Channel</button>
       </div>
     </div>
-
-    <div class="settings-section">
-      <h3>Active Streams (${activeStreams?.length || 0})</h3>
-      <div style="margin-top: 12px;">
-        ${activeStreams?.length > 0 ? activeStreams.map(s => `
-          <div style="display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px;">
-            <div style="flex: 1;">
-              <div style="font-weight: 500;">${escapeHtml(s.track || 'Unknown')}</div>
-              <div style="font-size: 12px; color: var(--text-muted);">${escapeHtml(s.artist || '')} • Queue: ${s.queueLength || 0}</div>
-            </div>
-            <button class="btn-secondary" onclick="skipSpotify('${s.channelId}')" style="padding: 6px 12px;">Skip</button>
-            <button class="btn-danger" onclick="stopSpotify('${s.channelId}')" style="padding: 6px 12px;">Stop</button>
-          </div>
-        `).join('') : '<p style="color: var(--text-muted);">No active streams</p>'}
-      </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveChannelChanges('${channelId}')">Save Changes</button>
     </div>
-    ` : ''}
   `;
+
+  overlay.classList.add('active');
 }
 
-async function toggleSpotifyBot(enabled) {
+// Save channel changes
+async function saveChannelChanges(channelId) {
+  const name = document.getElementById('editChannelName').value.trim();
+  const description = document.getElementById('editChannelDescription').value.trim();
+  const category = document.getElementById('editChannelCategory').value.trim();
+
+  if (!name) {
+    showToast('Channel name is required', 'warning');
+    return;
+  }
+
   try {
-    const response = await fetch(`${state.serverUrl}/api/admin/spotify-bot/enable`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ enabled })
+    const response = await fetch(`${state.serverUrl}/api/channels/${channelId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.token}`
+      },
+      body: JSON.stringify({ name, description, category })
     });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast(result.message, 'success');
-    openSpotifyBotModal();
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+
+    showToast('Channel updated!', 'success');
+    closeModal();
+
+    // Refresh channels and update UI if current channel was edited
+    await loadChannels();
+    if (state.currentChannel?._id === channelId) {
+      const updatedChannel = state.channels.find(c => c._id === channelId);
+      if (updatedChannel) {
+        document.getElementById('channelName').textContent = updatedChannel.name;
+        document.getElementById('channelDescription').textContent = updatedChannel.description || '';
+      }
+    }
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
 }
 
-async function configureSpotify() {
-  const clientId = document.getElementById('spotifyClientId').value.trim();
-  const clientSecret = document.getElementById('spotifyClientSecret').value.trim();
-  if (!clientId || !clientSecret) { showToast('Enter client ID and secret', 'error'); return; }
+// Delete channel
+async function deleteChannel(channelId) {
+  if (!confirm('Are you sure you want to delete this channel? This cannot be undone.')) {
+    return;
+  }
+
   try {
-    const response = await fetch(`${state.serverUrl}/api/admin/spotify-bot/configure`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ clientId, clientSecret })
+    const response = await fetch(`${state.serverUrl}/api/channels/${channelId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${state.token}`
+      }
     });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast('Configured! Now connect to Spotify.', 'success');
-    openSpotifyBotModal();
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error);
+    }
+
+    showToast('Channel deleted', 'success');
+    closeModal();
+
+    // Refresh channels
+    await loadChannels();
+
+    // If the deleted channel was selected, select another
+    if (state.currentChannel?._id === channelId) {
+      const firstChannel = state.channels.find(c => c.type === 'text');
+      if (firstChannel) {
+        selectChannel(firstChannel);
+      }
+    }
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
 }
 
-async function authorizeSpotify() {
-  const redirectUri = `${state.serverUrl}/api/admin/spotify-bot/callback`;
+// Load channels helper
+async function loadChannels() {
   try {
-    const response = await fetch(`${state.serverUrl}/api/admin/spotify-bot/auth-url?redirectUri=${encodeURIComponent(redirectUri)}`, {
+    const response = await fetch(`${state.serverUrl}/api/channels`, {
       headers: { 'Authorization': `Bearer ${state.token}` }
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    window.open(data.url, '_blank', 'width=500,height=700');
+    if (response.ok) {
+      state.channels = data.channels;
+      renderChannels();
+    }
   } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function disconnectSpotify() {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/spotify-bot/disconnect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` }
-    });
-    if (!response.ok) throw new Error((await response.json()).error);
-    showToast('Disconnected', 'success');
-    openSpotifyBotModal();
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function searchSpotify() {
-  const query = document.getElementById('spotifySearch').value.trim();
-  if (!query) { showToast('Enter search term', 'error'); return; }
-  const div = document.getElementById('spotifyResults');
-  div.innerHTML = 'Searching...';
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/spotify-bot/search?query=${encodeURIComponent(query)}`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    div.innerHTML = data.results?.length > 0 ? data.results.filter(r => r.type === 'track').slice(0, 10).map(track => `
-      <div style="display: flex; align-items: center; gap: 12px; padding: 8px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 4px;">
-        ${track.image ? `<img src="${track.image}" style="width: 40px; height: 40px; border-radius: 4px;">` : ''}
-        <div style="flex: 1;"><div style="font-weight: 500;">${escapeHtml(track.name)}</div><div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(track.artist)}</div></div>
-        <button class="btn-primary" onclick="playSpotify('${track.uri}')" style="padding: 4px 8px; font-size: 12px;">Play</button>
-        <button class="btn-secondary" onclick="queueSpotify('${track.uri}')" style="padding: 4px 8px; font-size: 12px;">Queue</button>
-      </div>
-    `).join('') : '<p style="color: var(--text-muted);">No results</p>';
-  } catch (error) {
-    div.innerHTML = `<span style="color: var(--danger);">${error.message}</span>`;
-  }
-}
-
-async function playSpotify(uri) {
-  const channelId = document.getElementById('spotifyChannel').value;
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/spotify-bot/play`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ channelId, uri })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast(`Playing: ${result.name || 'Track'}`, 'success');
-    openSpotifyBotModal();
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function queueSpotify(uri) {
-  const channelId = document.getElementById('spotifyChannel').value;
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/spotify-bot/queue`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ channelId, uri })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast(`Added to queue: ${result.name || 'Track'}`, 'success');
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function skipSpotify(channelId) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/spotify-bot/skip`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ channelId })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast('Skipped', 'success');
-    openSpotifyBotModal();
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function stopSpotify(channelId) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/spotify-bot/stop`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ channelId })
-    });
-    if (!response.ok) throw new Error((await response.json()).error);
-    showToast('Stopped', 'success');
-    openSpotifyBotModal();
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
+    console.error('Failed to load channels:', error);
   }
 }
 
@@ -3908,7 +4994,7 @@ async function openGroupsModal() {
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Groups & Access Control</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body" style="max-height: 500px; overflow-y: auto;">
       <div id="groupsContent">Loading...</div>
@@ -4200,7 +5286,11 @@ function closeModal() {
     state.previousModal = null;
     // Call the return modal function
     if (returnTo === 'settings') {
-      openSettings();
+      openSettings().catch(err => {
+        console.error('Failed to open settings:', err);
+        showToast('Error returning to settings: ' + err.message, 'error');
+        document.getElementById('modalOverlay').classList.remove('active');
+      });
     } else if (returnTo === 'bots') {
       openBotsModal();
     }
@@ -4224,16 +5314,27 @@ function closeModalFull() {
   document.getElementById('modalOverlay').classList.remove('active');
 }
 
+// Close bot modal and return to settings (for admin context)
+function closeBotModalToSettings() {
+  state.previousModal = null;
+  openSettings();
+}
+
 // ==================== Bot Picker Modal ====================
 // Opens from voice panel - shows all available bots to users
 function openBotsModal() {
+  // Exit fullscreen if active (modal won't show on top of native fullscreen)
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  }
+
   const overlay = document.getElementById('modalOverlay');
   const modal = document.getElementById('modalContent');
 
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Channel Bots</h2>
-      <button class="close-btn" onclick="closeModalFull()">×</button>
+      <button class="modal-close" onclick="closeModalFull()">✕</button>
     </div>
     <div class="modal-body">
       <p style="color: var(--text-muted); margin-bottom: 16px;">Select a bot to use in the current voice channel</p>
@@ -4244,10 +5345,6 @@ function openBotsModal() {
           <button class="bot-tile" onclick="openUserBotModal('youtube')">
             <span style="font-size: 32px;">🎬</span>
             <span>YouTube</span>
-          </button>
-          <button class="bot-tile" onclick="openUserBotModal('spotify')">
-            <span style="font-size: 32px;">🎵</span>
-            <span>Spotify</span>
           </button>
           <button class="bot-tile" onclick="openUserBotModal('twitch')">
             <span style="font-size: 32px;">📺</span>
@@ -4279,10 +5376,6 @@ function openBotsModal() {
             <span style="font-size: 32px;">🎮</span>
             <span>Game Together</span>
           </button>
-          <button class="bot-tile" onclick="openUserBotModal('rpg')">
-            <span style="font-size: 32px;">⚔️</span>
-            <span>RPG Bot</span>
-          </button>
         </div>
       </div>
 
@@ -4292,14 +5385,6 @@ function openBotsModal() {
           <button class="bot-tile" onclick="openUserBotModal('chrome')">
             <span style="font-size: 32px;">🌐</span>
             <span>Chrome</span>
-          </button>
-          <button class="bot-tile" onclick="openUserBotModal('imagesearch')">
-            <span style="font-size: 32px;">🖼️</span>
-            <span>Image Search</span>
-          </button>
-          <button class="bot-tile" onclick="openUserBotModal('activitystats')">
-            <span style="font-size: 32px;">📊</span>
-            <span>Activity Stats</span>
           </button>
         </div>
       </div>
@@ -4354,9 +5439,6 @@ async function openUserBotModal(botType) {
     case 'youtube':
       openYouTubeBotModal();
       break;
-    case 'spotify':
-      openSpotifyBotModal();
-      break;
     case 'twitch':
       openTwitchBotModal();
       break;
@@ -4374,15 +5456,6 @@ async function openUserBotModal(botType) {
       break;
     case 'chrome':
       openChromeBotModal();
-      break;
-    case 'imagesearch':
-      openImageSearchBotModal();
-      break;
-    case 'rpg':
-      openRPGBotModal();
-      break;
-    case 'activitystats':
-      openActivityStatsBotModal();
       break;
     default:
       showToast('Bot not yet implemented', 'warning');
@@ -4397,9 +5470,6 @@ function openAdminBotModal(botType) {
     case 'youtube':
       openYouTubeBotModal();
       break;
-    case 'spotify':
-      openSpotifyBotModal();
-      break;
     case 'twitch':
       openTwitchBotModal();
       break;
@@ -4418,14 +5488,8 @@ function openAdminBotModal(botType) {
     case 'chrome':
       openChromeBotModal();
       break;
-    case 'imagesearch':
-      openImageSearchBotModal();
-      break;
-    case 'rpg':
-      openRPGBotModal();
-      break;
-    case 'activitystats':
-      openActivityStatsBotModal();
+    case 'game-together':
+      openGameTogetherBotModal();
       break;
     default:
       showToast('Bot admin panel not yet implemented', 'warning');
@@ -4435,13 +5499,14 @@ function openAdminBotModal(botType) {
 
 // ==================== Twitch Bot Modal ====================
 async function openTwitchBotModal() {
+  const prevModal = state.previousModal; // Preserve for refresh
   const overlay = document.getElementById('modalOverlay');
   const modal = document.getElementById('modalContent');
 
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Twitch Bot</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div id="twitchBotContent">Loading...</div>
@@ -4452,6 +5517,7 @@ async function openTwitchBotModal() {
   `;
 
   overlay.classList.add('active');
+  if (prevModal) state.previousModal = prevModal; // Restore for navigation
 
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/twitch-bot/status`, {
@@ -4482,7 +5548,7 @@ function renderTwitchBotContent(data) {
       <h3>Watch Stream</h3>
       <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
         <select id="twitchChannel" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          ${state.channels.filter(c => c.type === 'voice').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
+          ${state.channels.filter(c => c.type === 'voice' || c.type === 'video').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
         </select>
         <input type="text" id="twitchStreamer" placeholder="Streamer username" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
         <button class="btn-primary" onclick="watchTwitchStream()">Watch Stream</button>
@@ -4508,6 +5574,7 @@ function renderTwitchBotContent(data) {
 }
 
 async function toggleTwitchBot(enabled) {
+  const prevModal = state.previousModal;
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/twitch-bot/enable`, {
       method: 'POST',
@@ -4517,6 +5584,7 @@ async function toggleTwitchBot(enabled) {
     if (!response.ok) throw new Error((await response.json()).error);
     showToast(enabled ? 'Twitch bot enabled' : 'Twitch bot disabled', 'success');
     openTwitchBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
@@ -4529,6 +5597,7 @@ async function watchTwitchStream() {
     showToast('Please enter a streamer username', 'warning');
     return;
   }
+  const prevModal = state.previousModal;
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/twitch-bot/play`, {
       method: 'POST',
@@ -4538,12 +5607,14 @@ async function watchTwitchStream() {
     if (!response.ok) throw new Error((await response.json()).error);
     showToast('Now watching ' + streamer, 'success');
     openTwitchBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
 }
 
 async function stopTwitchStream(channelId) {
+  const prevModal = state.previousModal;
   try {
     const response = await fetch(`${state.serverUrl}/api/admin/twitch-bot/stop`, {
       method: 'POST',
@@ -4553,23 +5624,25 @@ async function stopTwitchStream(channelId) {
     if (!response.ok) throw new Error((await response.json()).error);
     showToast('Stream stopped', 'success');
     openTwitchBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
 }
 
-// ==================== Image Search Bot Modal ====================
-async function openImageSearchBotModal() {
+// ==================== Game Together Bot Modal ====================
+async function openGameTogetherBotModal() {
+  const prevModal = state.previousModal;
   const overlay = document.getElementById('modalOverlay');
   const modal = document.getElementById('modalContent');
 
   modal.innerHTML = `
     <div class="modal-header">
-      <h2>Image Search Bot</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <h2>Game Together</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
-      <div id="imageSearchBotContent">Loading...</div>
+      <div id="gameTogetherContent">Loading...</div>
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="closeModal()">Close</button>
@@ -4577,248 +5650,94 @@ async function openImageSearchBotModal() {
   `;
 
   overlay.classList.add('active');
+  if (prevModal) state.previousModal = prevModal;
 
   try {
-    const response = await fetch(`${state.serverUrl}/api/admin/image-bot/status`, {
+    const response = await fetch(`${state.serverUrl}/api/admin/game-together/status`, {
       headers: { 'Authorization': `Bearer ${state.token}` }
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error);
-    renderImageSearchBotContent(data);
+    renderGameTogetherContent(data);
   } catch (error) {
-    document.getElementById('imageSearchBotContent').innerHTML = `<p style="color: var(--danger);">Failed to load: ${error.message}</p>`;
+    document.getElementById('gameTogetherContent').innerHTML = `<p style="color: var(--danger);">Failed to load: ${error.message}</p>`;
   }
 }
 
-function renderImageSearchBotContent(data) {
-  const { enabled, safeSearch } = data;
-  document.getElementById('imageSearchBotContent').innerHTML = `
+function renderGameTogetherContent(data) {
+  const { enabled, platform, backendAvailable, activeSessions } = data;
+  document.getElementById('gameTogetherContent').innerHTML = `
     <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Bot Status</h3>
+      <h3>Service Status</h3>
       <div style="display: flex; align-items: center; gap: 16px; margin-top: 12px;">
         <span style="color: ${enabled ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">${enabled ? 'Enabled' : 'Disabled'}</span>
-        <button class="btn-${enabled ? 'danger' : 'primary'}" onclick="toggleImageSearchBot(${!enabled})">${enabled ? 'Disable' : 'Enable'}</button>
+        <button class="btn-${enabled ? 'danger' : 'primary'}" onclick="toggleGameTogether(${!enabled})">${enabled ? 'Disable' : 'Enable'}</button>
       </div>
-      <p style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">Search and share images in channels.</p>
+      <p style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">Virtual controller emulation for remote multiplayer gaming.</p>
     </div>
 
     <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Content Filter</h3>
-      <div style="display: flex; align-items: center; gap: 16px; margin-top: 12px;">
-        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-          <input type="checkbox" id="imageSearchSafeSearch" ${safeSearch ? 'checked' : ''} onchange="toggleImageSearchSafeSearch(this.checked)" style="accent-color: var(--accent-primary);">
-          <span>Safe Search (NSFW Filter)</span>
-        </label>
+      <h3>Platform Info</h3>
+      <div style="margin-top: 12px; padding: 12px; background: var(--bg-dark); border-radius: var(--radius-sm);">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span style="color: var(--text-muted);">Platform:</span>
+          <span>${escapeHtml(platform || 'Unknown')}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span style="color: var(--text-muted);">Controller Backend:</span>
+          <span style="color: ${backendAvailable ? 'var(--success)' : 'var(--danger)'};">${backendAvailable ? 'Available' : 'Not Available'}</span>
+        </div>
       </div>
-      <p style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">When enabled, filters out explicit/adult content from search results.</p>
+      ${!backendAvailable ? `<p style="color: var(--warning); font-size: 12px; margin-top: 8px;">Virtual controller backend not available. Install ViGEmBus (Windows), uinput (Linux), or foohid (macOS).</p>` : ''}
     </div>
 
-    ${enabled ? `
     <div class="settings-section">
-      <h3>Search Images</h3>
-      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-        <input type="text" id="imageSearchQuery" placeholder="Search query" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-        <button class="btn-primary" onclick="searchImages()">Search</button>
-        <div id="imageSearchResults" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; margin-top: 8px;"></div>
-      </div>
-    </div>
-    ` : ''}
-  `;
-}
-
-async function toggleImageSearchBot(enabled) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/image-bot/enable`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ enabled })
-    });
-    if (!response.ok) throw new Error((await response.json()).error);
-    showToast(enabled ? 'Image Search bot enabled' : 'Image Search bot disabled', 'success');
-    openImageSearchBotModal();
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function toggleImageSearchSafeSearch(enabled) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/image-bot/safe-search`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ safeSearch: enabled })
-    });
-    if (!response.ok) throw new Error((await response.json()).error);
-    showToast(enabled ? 'Safe search enabled' : 'Safe search disabled (NSFW allowed)', 'success');
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function searchImages() {
-  const query = document.getElementById('imageSearchQuery').value.trim();
-  if (!query) {
-    showToast('Please enter a search query', 'warning');
-    return;
-  }
-  try {
-    const response = await fetch(`${state.serverUrl}/api/image-search/search?q=${encodeURIComponent(query)}`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-
-    const resultsDiv = document.getElementById('imageSearchResults');
-    if (data.images?.length > 0) {
-      resultsDiv.innerHTML = data.images.map(img => `
-        <img src="${escapeHtml(img.thumbnail)}" alt="${escapeHtml(img.title)}" style="width: 100%; height: 80px; object-fit: cover; border-radius: var(--radius-sm); cursor: pointer;" onclick="shareImage('${escapeHtml(img.url)}')">
-      `).join('');
-    } else {
-      resultsDiv.innerHTML = '<p style="color: var(--text-muted); grid-column: 1/-1;">No images found</p>';
-    }
-  } catch (error) {
-    showToast('Search failed: ' + error.message, 'error');
-  }
-}
-
-// ==================== RPG Bot Modal ====================
-async function openRPGBotModal() {
-  const overlay = document.getElementById('modalOverlay');
-  const modal = document.getElementById('modalContent');
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2>RPG Bot</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
-    </div>
-    <div class="modal-body">
-      <div id="rpgBotContent">Loading...</div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModal()">Close</button>
-    </div>
-  `;
-
-  overlay.classList.add('active');
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/rpg-bot/status`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    renderRPGBotContent(data);
-  } catch (error) {
-    document.getElementById('rpgBotContent').innerHTML = `<p style="color: var(--danger);">Failed to load: ${error.message}</p>`;
-  }
-}
-
-function renderRPGBotContent(data) {
-  const { enabled, activeGames, playerCount } = data;
-  document.getElementById('rpgBotContent').innerHTML = `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Bot Status</h3>
-      <div style="display: flex; align-items: center; gap: 16px; margin-top: 12px;">
-        <span style="color: ${enabled ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">${enabled ? 'Enabled' : 'Disabled'}</span>
-        <button class="btn-${enabled ? 'danger' : 'primary'}" onclick="toggleRPGBot(${!enabled})">${enabled ? 'Disable' : 'Enable'}</button>
-      </div>
-      <p style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">Play text-based RPG adventures in channels with dice rolling, character sheets, and more.</p>
-    </div>
-
-    ${enabled ? `
-    <div class="settings-section">
-      <h3>Stats</h3>
+      <h3>Active Sessions (${activeSessions?.length || 0})</h3>
       <div style="margin-top: 12px;">
-        <p style="color: var(--text-secondary);">Active Games: ${activeGames || 0}</p>
-        <p style="color: var(--text-secondary);">Total Players: ${playerCount || 0}</p>
+        ${activeSessions?.length > 0 ? activeSessions.map(s => `
+          <div style="display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px;">
+            <div style="flex: 1;">
+              <div style="font-weight: 500;">Host: ${escapeHtml(s.hostUsername)}</div>
+              <div style="font-size: 12px; color: var(--text-muted);">${s.playerCount} player(s) connected</div>
+            </div>
+            <button class="btn-danger" onclick="stopGameTogetherSession('${s.channelId}')" style="padding: 6px 12px;">Stop</button>
+          </div>
+        `).join('') : '<p style="color: var(--text-muted);">No active sessions</p>'}
       </div>
     </div>
-    ` : ''}
   `;
 }
 
-async function toggleRPGBot(enabled) {
+async function toggleGameTogether(enabled) {
+  const prevModal = state.previousModal;
   try {
-    const response = await fetch(`${state.serverUrl}/api/admin/rpg-bot/enable`, {
+    const response = await fetch(`${state.serverUrl}/api/admin/game-together/enable`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
       body: JSON.stringify({ enabled })
     });
-    if (!response.ok) throw new Error((await response.json()).error);
-    showToast(enabled ? 'RPG bot enabled' : 'RPG bot disabled', 'success');
-    openRPGBotModal();
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    showToast(enabled ? 'Game Together enabled' : 'Game Together disabled', 'success');
+    openGameTogetherBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
 }
 
-// ==================== Activity Stats Bot Modal ====================
-async function openActivityStatsBotModal() {
-  const overlay = document.getElementById('modalOverlay');
-  const modal = document.getElementById('modalContent');
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2>Activity Stats Bot</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
-    </div>
-    <div class="modal-body">
-      <div id="activityStatsBotContent">Loading...</div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModal()">Close</button>
-    </div>
-  `;
-
-  overlay.classList.add('active');
-
+async function stopGameTogetherSession(channelId) {
+  const prevModal = state.previousModal;
   try {
-    const response = await fetch(`${state.serverUrl}/api/admin/activity-bot/status`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    renderActivityStatsBotContent(data);
-  } catch (error) {
-    document.getElementById('activityStatsBotContent').innerHTML = `<p style="color: var(--danger);">Failed to load: ${error.message}</p>`;
-  }
-}
-
-function renderActivityStatsBotContent(data) {
-  const { enabled, trackedUsers, totalMessages, totalVoiceMinutes } = data;
-  document.getElementById('activityStatsBotContent').innerHTML = `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Bot Status</h3>
-      <div style="display: flex; align-items: center; gap: 16px; margin-top: 12px;">
-        <span style="color: ${enabled ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">${enabled ? 'Enabled' : 'Disabled'}</span>
-        <button class="btn-${enabled ? 'danger' : 'primary'}" onclick="toggleActivityStatsBot(${!enabled})">${enabled ? 'Disable' : 'Enable'}</button>
-      </div>
-      <p style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">Track user activity, message counts, voice time, and generate leaderboards.</p>
-    </div>
-
-    ${enabled ? `
-    <div class="settings-section">
-      <h3>Server Stats</h3>
-      <div style="margin-top: 12px;">
-        <p style="color: var(--text-secondary);">Tracked Users: ${trackedUsers || 0}</p>
-        <p style="color: var(--text-secondary);">Total Messages: ${totalMessages || 0}</p>
-        <p style="color: var(--text-secondary);">Total Voice Time: ${Math.round((totalVoiceMinutes || 0) / 60)} hours</p>
-      </div>
-    </div>
-    ` : ''}
-  `;
-}
-
-async function toggleActivityStatsBot(enabled) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/activity-bot/enable`, {
+    const response = await fetch(`${state.serverUrl}/api/admin/game-together/stop`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ enabled })
+      body: JSON.stringify({ channelId })
     });
     if (!response.ok) throw new Error((await response.json()).error);
-    showToast(enabled ? 'Activity Stats bot enabled' : 'Activity Stats bot disabled', 'success');
-    openActivityStatsBotModal();
+    showToast('Session stopped', 'success');
+    openGameTogetherBotModal();
+    state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
   }
@@ -4831,6 +5750,8 @@ function disconnect() {
 
   if (window.electronAPI) {
     window.electronAPI.clearToken();
+  } else {
+    clearWebSession();
   }
 
   state.user = null;
@@ -4883,25 +5804,120 @@ function formatTime(date) {
 
 function getAvatarColor(name) {
   const colors = [
-    'linear-gradient(135deg, #ff8c00, #ff6b00)',
-    'linear-gradient(135deg, #ff6b6b, #ff8e53)',
-    'linear-gradient(135deg, #4ecdc4, #44a08d)',
-    'linear-gradient(135deg, #667eea, #764ba2)',
-    'linear-gradient(135deg, #4facfe, #00f2fe)'
+    'linear-gradient(135deg, #FF8A3D, #E8551F)',
+    'linear-gradient(135deg, #3D7BFF, #2A5BD0)',
+    'linear-gradient(135deg, #19C37D, #128A5A)',
+    'linear-gradient(135deg, #B86BFF, #8A3DE8)',
+    'linear-gradient(135deg, #E8A33D, #C77F1F)'
   ];
   let hash = 0;
-  for (let i = 0; i < name.length; i++) {
+  for (let i = 0; i < (name || '').length; i++) {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
   }
   return colors[Math.abs(hash) % colors.length];
 }
 
+// Solid server-identity color for rail tiles (Ember orange / blue / green / purple / amber)
+function getServerColor(server, index = 0) {
+  const palette = ['#FF6A2B', '#3D7BFF', '#19C37D', '#B86BFF', '#E8A33D'];
+  const key = server?.name || String(index);
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = key.charCodeAt(i) + ((hash << 5) - hash);
+  // first/current server keeps the Ember orange
+  if (index === 0) return '#FF6A2B';
+  return palette[Math.abs(hash) % palette.length];
+}
+
 function getRoleColor(role) {
   switch (role) {
-    case 'superadmin': return '#ff8c00';
-    case 'admin': return '#ff6b6b';
-    default: return '#ffffff';
+    case 'superadmin': return '#FF6A2B';
+    case 'admin': return '#FF8A3D';
+    case 'moderator': return '#3D7BFF';
+    default: return '#D7D0C6';
   }
+}
+
+// Home coal → jump to Direct Messages section
+function goHome() {
+  const dm = document.getElementById('dmSection');
+  if (dm) dm.scrollIntoView({ behavior: 'smooth' });
+}
+
+// Toggle the members panel (chat only)
+function toggleMembers() {
+  const app = document.getElementById('mainApp');
+  const btn = document.getElementById('membersToggleBtn');
+  if (!app) return;
+  const showing = app.classList.toggle('members-active');
+  const panel = document.getElementById('membersPanel');
+  if (panel) panel.style.display = showing ? 'flex' : 'none';
+  if (btn) btn.classList.toggle('active', showing);
+  if (showing) renderMembers();
+}
+// alias kept for any older callers
+function showMembers() { toggleMembers(); }
+
+// Render the members panel, grouped by IRC mode (Ops / Voiced / Online / Offline)
+function renderMembers() {
+  const list = document.getElementById('membersList');
+  if (!list) return;
+
+  // Best-effort member source: channel members, voice participants, or known users.
+  const members = (state.channelMembers && state.channelMembers.length)
+    ? state.channelMembers
+    : (state.onlineUsers || []);
+
+  // Always include self so the panel is never empty.
+  const self = state.user ? [{
+    username: state.user.username,
+    displayName: state.user.displayName || state.user.username,
+    role: state.user.role,
+    presence: 'online',
+    activity: state.user.customStatus || ''
+  }] : [];
+
+  const all = [...self, ...members.filter(m => m.username !== state.user?.username)];
+
+  const groups = { ops: [], voiced: [], online: [], offline: [] };
+  for (const m of all) {
+    const role = m.role || 'member';
+    if (role === 'admin' || role === 'superadmin' || role === 'moderator') groups.ops.push(m);
+    else if (m.voiced) groups.voiced.push(m);
+    else if ((m.presence || 'online') === 'offline') groups.offline.push(m);
+    else groups.online.push(m);
+  }
+
+  const modeFor = (g) => g === 'ops' ? '@' : g === 'voiced' ? '+' : '';
+  const modeClass = (g) => g === 'ops' ? 'mode-op' : g === 'voiced' ? 'mode-voice' : '';
+
+  const renderGroup = (label, key) => {
+    const arr = groups[key];
+    if (!arr.length) return '';
+    return `<div class="members-group">${label} — ${arr.length}</div>` + arr.map(m => {
+      const name = m.displayName || m.username || 'user';
+      const presence = key === 'offline' ? 'offline' : (m.presence || 'online');
+      const initials = name.substring(0, 2).toUpperCase();
+      const activity = m.activity || '';
+      const mode = modeFor(key);
+      return `
+        <div class="member-row ${key === 'offline' ? 'offline' : ''}">
+          <div class="member-avatar" style="background:${getAvatarColor(name)};">
+            ${initials}
+            <div class="status-indicator ${presence}"></div>
+          </div>
+          <div class="member-meta">
+            <div class="member-nick">${mode ? `<span class="${modeClass(key)}">${mode}</span>` : ''}<span class="nick">${escapeHtml(name)}</span></div>
+            ${activity ? `<div class="member-activity">${escapeHtml(activity)}</div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+  };
+
+  list.innerHTML =
+    renderGroup('Ops', 'ops') +
+    renderGroup('Voiced', 'voiced') +
+    renderGroup('Online', 'online') +
+    renderGroup('Offline', 'offline');
 }
 
 // ==================== Multi-Server Support ====================
@@ -4945,7 +5961,7 @@ function openAddServerModal() {
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Add Server</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div class="settings-section">
@@ -5101,41 +6117,60 @@ function openServerMenu(event) {
 // ==================== Theming System ====================
 const themes = {
   dark: {
-    name: 'Dark',
+    name: 'Ember Dark',
     vars: {
-      '--bg-darkest': '#1a1a2e',
-      '--bg-darker': '#1e1e32',
-      '--bg-dark': '#252538',
-      '--bg-medium': '#2a2a42',
-      '--bg-light': '#32324a',
-      '--bg-lighter': '#3a3a52',
-      '--text-primary': '#ffffff',
-      '--text-secondary': '#b3b3b3',
-      '--text-muted': '#72727e',
-      '--accent-primary': '#ff8c00',
-      '--accent-secondary': '#ff6b00',
-      '--success': '#4ecdc4',
-      '--danger': '#ff6b6b',
-      '--warning': '#ffd93d'
+      '--bg-darkest': '#0A0908',
+      '--bg-darker': '#100E0C',
+      '--bg-dark': '#13110E',
+      '--bg-medium': '#1A1714',
+      '--bg-light': '#2A2621',
+      '--bg-lighter': '#3a352e',
+      '--text-primary': '#F4EFE8',
+      '--text-secondary': '#D7D0C6',
+      '--text-muted': '#9A938A',
+      '--accent-primary': '#FF6A2B',
+      '--accent-secondary': '#FF8A3D',
+      '--success': '#4FCB6B',
+      '--danger': '#F2554D',
+      '--warning': '#FFB454'
     }
   },
   midnight: {
-    name: 'Midnight Blue',
+    name: 'Midnight',
     vars: {
-      '--bg-darkest': '#0d1117',
-      '--bg-darker': '#161b22',
-      '--bg-dark': '#21262d',
-      '--bg-medium': '#30363d',
-      '--bg-light': '#484f58',
-      '--bg-lighter': '#6e7681',
-      '--text-primary': '#f0f6fc',
-      '--text-secondary': '#8b949e',
-      '--text-muted': '#6e7681',
-      '--accent-primary': '#58a6ff',
-      '--accent-secondary': '#1f6feb',
-      '--success': '#3fb950',
-      '--danger': '#f85149',
-      '--warning': '#d29922'
+      '--bg-darkest': '#080a0f',
+      '--bg-darker': '#0d1016',
+      '--bg-dark': '#11151d',
+      '--bg-medium': '#1a1f29',
+      '--bg-light': '#262c38',
+      '--bg-lighter': '#39404e',
+      '--text-primary': '#F4EFE8',
+      '--text-secondary': '#cdd3dd',
+      '--text-muted': '#8c93a0',
+      '--accent-primary': '#FF6A2B',
+      '--accent-secondary': '#FF8A3D',
+      '--success': '#4FCB6B',
+      '--danger': '#F2554D',
+      '--warning': '#FFB454'
+    }
+  },
+  amoled: {
+    name: 'AMOLED',
+    vars: {
+      '--bg-darkest': '#000000',
+      '--bg-darker': '#040403',
+      '--bg-dark': '#090806',
+      '--bg-medium': '#121110',
+      '--bg-light': '#1f1d1a',
+      '--bg-lighter': '#2c2925',
+      '--text-primary': '#F4EFE8',
+      '--text-secondary': '#D7D0C6',
+      '--text-muted': '#9A938A',
+      '--accent-primary': '#FF6A2B',
+      '--accent-secondary': '#FF8A3D',
+      '--success': '#4FCB6B',
+      '--danger': '#F2554D',
+      '--warning': '#FFB454'
     }
   },
   forest: {
@@ -5227,7 +6262,7 @@ function openThemeSelector() {
   modal.innerHTML = `
     <div class="modal-header">
       <h2>Choose Theme</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
@@ -5278,7 +6313,7 @@ function openGameTogetherFromBots() {
   modal.innerHTML = `
     <div class="modal-header">
       <h2>🎮 Game Together</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <p style="color: var(--text-muted); margin-bottom: 16px;">Play ANY local multiplayer game together with friends in your voice channel!</p>
@@ -5328,7 +6363,7 @@ async function startGameTogetherAsHost() {
   try {
     showToast('Starting Game Together session...', 'info');
 
-    const response = await fetch(`${state.serverUrl}/api/game-together/start`, {
+    const response = await fetch(`${state.serverUrl}/api/admin/game-together/start`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${state.token}`,
@@ -5365,7 +6400,7 @@ async function showGameTogetherJoinList() {
   modal.innerHTML = `
     <div class="modal-header">
       <h2>🎮 Join Game Together</h2>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
       <div id="gameTogetherSessionList" style="text-align: center;">
@@ -5379,7 +6414,7 @@ async function showGameTogetherJoinList() {
   `;
 
   try {
-    const response = await fetch(`${state.serverUrl}/api/game-together/sessions`, {
+    const response = await fetch(`${state.serverUrl}/api/admin/game-together/sessions`, {
       headers: { 'Authorization': `Bearer ${state.token}` }
     });
     const data = await response.json();
@@ -5416,7 +6451,7 @@ async function joinGameTogetherSession(hostUserId) {
   try {
     showToast('Joining Game Together session...', 'info');
 
-    const response = await fetch(`${state.serverUrl}/api/game-together/join`, {
+    const response = await fetch(`${state.serverUrl}/api/admin/game-together/join`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${state.token}`,
@@ -5531,7 +6566,7 @@ async function leaveGameTogether() {
 
   if (state.gameTogether.active) {
     try {
-      await fetch(`${state.serverUrl}/api/game-together/leave`, {
+      await fetch(`${state.serverUrl}/api/admin/game-together/leave`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${state.token}`,
@@ -5566,7 +6601,7 @@ function openGameTogetherMenu(hostUserId, hostLabel) {
   modal.innerHTML = `
     <div class="modal-header">
       <h2>🎮 Game Together</h2>
-      <button class="close-btn" onclick="closeModalFull()">×</button>
+      <button class="modal-close" onclick="closeModalFull()">✕</button>
     </div>
     <div class="modal-body" style="text-align: center;">
       <p style="margin-bottom: 24px;">Play games together with ${hostLabel}!</p>

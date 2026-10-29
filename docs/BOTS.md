@@ -135,6 +135,24 @@ Stream media from Jellyfin (free, open-source Plex/Emby alternative).
 - Same features as Emby Bot
 - Full Jellyfin API support
 
+**Why this replaces "The Projectionist" (movie nights):**
+
+Movie nights used to run through a Discord user account ("the projectionist") left
+logged in on a VM, screen-sharing Kodi into a voice channel, with Kodi's web remote
+port-forwarded on the home router so friends could control it. That setup was fragile
+and exposed:
+
+- Discord bots can't stream video into voice, so it needed a real user account kept
+  logged in. Automating that account is a selfbot, which breaks Discord's ToS.
+- Any logout, dropped screen share or VM hiccup meant someone had to go fix it.
+- Kodi's web UI was open to the internet through router port forwards.
+- Everyone watched a recompressed screen share instead of the actual file.
+
+On F7Lans we run our own server, so the Jellyfin bot can play into voice channels
+legitimately: no babysat account, every friend gets the real stream, and the whole
+thing is reachable only over Tailscale (no router ports). Close the old Kodi port
+forwards and retire the projectionist VM once this is running.
+
 ---
 
 ### IPTV Bot

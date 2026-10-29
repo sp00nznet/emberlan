@@ -137,7 +137,7 @@ iOS/Android support via Capacitor. Framework is in place but full implementation
 | YouTube | ✅ | ✅ | Stream YouTube videos to voice |
 | Plex | ✅ | ✅ | Stream from Plex Media Server |
 | Emby | ✅ | ✅ | Stream from Emby server |
-| Jellyfin | ✅ | ✅ | Stream from Jellyfin |
+| Jellyfin | ✅ | ✅ | Stream from Jellyfin — replaces the old Discord/Kodi "projectionist" movie-night VM (see BOTS.md) |
 | IPTV | ✅ | ✅ | Live TV with EPG guide |
 | Twitch | ✅ | ✅ | Watch Twitch streams together |
 | Chrome | ✅ | ✅ | Shared browser sessions |

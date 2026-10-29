@@ -399,6 +399,8 @@ function renderLoginExtras() {
       host = new URL(raw, window.location.origin).host;
     } catch { host = window.location.host; }
     addrEl.value = host || '';
+    // Desktop has no serving origin to inherit — let the user type a server.
+    if (window.electronAPI) addrEl.removeAttribute('readonly');
   }
 
   const list = document.getElementById('recentServers');
@@ -574,7 +576,15 @@ async function tryAutoLogin() {
 async function handleConnect(e) {
   e.preventDefault();
 
-  const serverUrl = document.getElementById('serverUrl').value.trim();
+  let serverUrl = document.getElementById('serverUrl').value.trim();
+  // Desktop: the visible, editable field is the server address (no same-origin to fall back on).
+  if (window.electronAPI) {
+    let addr = document.getElementById('serverAddress').value.trim();
+    if (addr) {
+      if (!/^https?:\/\//i.test(addr)) addr = 'http://' + addr;
+      serverUrl = addr;
+    }
+  }
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
   const rememberMe = document.getElementById('rememberMe').checked;

@@ -45,3 +45,6 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# Local tool settings
+.claude/settings.local.json
