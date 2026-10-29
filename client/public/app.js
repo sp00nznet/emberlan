@@ -4970,22 +4970,6 @@ async function deleteChannel(channelId) {
   }
 }
 
-// Load channels helper
-async function loadChannels() {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/channels`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (response.ok) {
-      state.channels = data.channels;
-      renderChannels();
-    }
-  } catch (error) {
-    console.error('Failed to load channels:', error);
-  }
-}
-
 // ==================== Groups Management Modal ====================
 async function openGroupsModal() {
   const overlay = document.getElementById('modalOverlay');
@@ -5257,15 +5241,6 @@ async function removeUserFromGroup(groupId, userId) {
     await manageGroupMembers(groupId);
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-function getRoleColor(role) {
-  switch (role) {
-    case 'superadmin': return 'var(--accent-primary)';
-    case 'admin': return '#ff6b6b';
-    case 'moderator': return '#6bff6b';
-    default: return 'var(--bg-lighter)';
   }
 }
 
@@ -6560,33 +6535,6 @@ function stopGameTogetherPolling() {
   }
 }
 
-// Leave Game Together session
-async function leaveGameTogether() {
-  stopGameTogetherPolling();
-
-  if (state.gameTogether.active) {
-    try {
-      await fetch(`${state.serverUrl}/api/admin/game-together/leave`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${state.token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          hostUserId: state.gameTogether.hostUserId
-        })
-      });
-    } catch (e) {
-      console.error('Failed to leave Game Together:', e);
-    }
-  }
-
-  state.gameTogether.active = false;
-  state.gameTogether.isHost = false;
-  state.gameTogether.hostUserId = null;
-  state.gameTogether.playerSlot = null;
-  showToast('Left Game Together session', 'info');
-}
 
 // Open Game Together menu
 function openGameTogetherMenu(hostUserId, hostLabel) {
@@ -6793,6 +6741,7 @@ function startGameTogetherGamepadPolling() {
   if (state.gameTogether.pollingInterval) return;
 
   console.log('[Game Together] Starting gamepad polling');
+  window.touchPad?.start();
 
   state.gameTogether.pollingInterval = setInterval(() => {
     pollGameTogetherGamepad();
@@ -6806,6 +6755,7 @@ function stopGameTogetherGamepadPolling() {
     state.gameTogether.pollingInterval = null;
     console.log('[Game Together] Stopped gamepad polling');
   }
+  window.touchPad?.stop();
 }
 
 // Poll gamepad and send input to server
@@ -6828,7 +6778,12 @@ function pollGameTogetherGamepad() {
     }
   }
 
-  if (!gamepad) return;
+  // No physical pad: fall back to the on-screen touch pad (touchpad.js).
+  if (!gamepad) {
+    const touch = window.touchPad?.read();
+    if (touch) sendGameTogetherInput(touch);
+    return;
+  }
 
   // Map gamepad to Xbox controller layout
   const inputData = {

@@ -89,6 +89,12 @@ async function contract() {
     const rel = [...app.matchAll(/fetch\(\s*['"`]\/api\//g)].length;
     return !rel || `${rel} fetch() call(s) use a relative /api/ URL`;
   });
+  await check('contract/no function is defined twice in app.js (the later one silently wins)', () => {
+    const seen = new Map();
+    for (const [, n] of app.matchAll(/^(?:async\s+)?function\s+(\w+)/gm)) seen.set(n, (seen.get(n) || 0) + 1);
+    const d = [...seen].filter(([, c]) => c > 1).map(([n]) => n);
+    return !d.length || d.join(', ');
+  });
   for (const c of calls) {
     await check(`contract/api ${c.method} ${c.path}`, () =>
       routes.some((r) => routeMatches(c, r)) || 'no server route');
@@ -114,10 +120,11 @@ async function contract() {
     await check(`parity/bridge ${k}`, () =>
       (preload.has(k) && android.has(k)) || `desktop:${preload.has(k)} android:${android.has(k)}`);
   }
-  await check('parity/desktop renderer is generated from client/public', () => {
-    const s = read('electron-client/scripts/copy-renderer.js');
-    const missing = fs.readdirSync(path.join(ROOT, 'client/public')).filter((f) => !s.includes(`'${f}'`));
-    return (!missing.length && read('.gitignore').includes('electron-client/renderer/')) || `not copied: ${missing}`;
+  await check('parity/desktop renderer is generated from client/public', () =>
+    (/client', 'public'/.test(read('electron-client/scripts/copy-renderer.js')) && read('.gitignore').includes('electron-client/renderer/')) || 'renderer is not a pure copy of client/public');
+  await check('contract/UI loads no scripts from a CDN (CSP blocks them; desktop/Android must work offline)', () => {
+    const ext = [...read('client/public/index.html').matchAll(/<script[^>]+src="(https?:[^"]+)"/g)].map((m) => m[1]);
+    return !ext.length || ext.join(', ');
   });
   await check('parity/android www is generated from client/public', () =>
     /client', 'public'/.test(read('mobile/scripts/copy-client.js')) || 'mobile copies from elsewhere');
@@ -127,7 +134,7 @@ async function contract() {
   // Look: no Discord brand leftovers in the UI.
   const ui = app + read('client/public/styles.css') + read('client/public/index.html');
   await check('style/no Discord brand colors or names', () => {
-    const hits = ui.match(/#5865f2|#36393f|#2f3136|#202225|#7289da|blurple|\bdiscord\b|Whitney|gg sans/gi);
+    const hits = ui.match(/#5865f2|#36393f|#2f3136|#202225|#7289da|#40444b|#b9bbbe|#72767d|#dcddde|#96989d|#23a55a|#f23f43|#4f545c|#8e9297|blurple|\bdiscord\b|Whitney|gg sans|\bnitro\b|server boost|jump to present/gi);
     return !hits || `found: ${[...new Set(hits)].join(', ')}`;
   });
 
@@ -196,6 +203,15 @@ async function live() {
       const r = await fetch(base + '/');
       return (r.ok && (await r.text()).includes('app.js')) || `status ${r.status}`;
     });
+
+    for (const origin of ['null', 'https://emberlan.local']) {
+      await check(`live/cors allows the ${origin === 'null' ? 'desktop' : 'Android'} app origin (${origin})`, async () => {
+        const r = await fetch(base + '/api/auth/login', { method: 'OPTIONS', headers: { Origin: origin,
+          'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type,authorization' } });
+        const allow = r.headers.get('access-control-allow-origin');
+        return allow === '*' || allow === origin || `allow-origin: ${allow}`;
+      });
+    }
 
     let admin, alice, bob;
     await check('live/auth login as default admin', async () => {
@@ -271,9 +287,128 @@ async function live() {
       });
     }
     sa?.close(); sb?.close();
+    await uiFlow(base, http);
   } finally {
     srv.kill();
     await mongo.stop();
+  }
+}
+
+// ---------- UI corpus: the shared client/public UI in a headless browser ----------
+// Drives the real login form and chat box over the DevTools protocol (Node's
+// built-in WebSocket; no puppeteer). Same code the desktop and Android shells run.
+function findBrowser() {
+  const c = [process.env.CHROME_PATH,
+    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'];
+  return c.find((p) => p && fs.existsSync(p));
+}
+
+async function uiFlow(base, http) {
+  const bin = findBrowser();
+  if (!bin) { console.log('SKIP ui - no Chrome/Edge found (set CHROME_PATH)'); return; }
+  const os = require('os');
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'emberlan-ui-'));
+  const cdpPort = 9300 + Math.floor(Math.random() * 500);
+  const br = spawn(bin, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+    '--disable-extensions', `--user-data-dir=${profile}`, `--remote-debugging-port=${cdpPort}`, 'about:blank']);
+  const errors = [];
+  let ws;
+  try {
+    let target;
+    for (let i = 0; i < 50 && !target; i++) {
+      try { target = (await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json()).find((t) => t.type === 'page'); }
+      catch { await new Promise((r) => setTimeout(r, 200)); }
+    }
+    if (!target) return record('ui/browser starts', false, bin);
+    ws = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
+    let id = 0; const pending = new Map();
+    ws.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+      if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
+      if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') errors.push(m.params.args.map((a) => a.value ?? a.description).join(' '));
+      if (m.method === 'Log.entryAdded' && m.params.entry.level === 'error' && !/favicon/.test(m.params.entry.url || '') && !/navigator.vibrate/.test(m.params.entry.text)) errors.push(m.params.entry.text);
+    };
+    const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+    const evaluate = async (expr) => (await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result?.result?.value;
+    const waitFor = async (expr, ms = 8000) => {
+      for (const t0 = Date.now(); Date.now() - t0 < ms;) { if (await evaluate(expr)) return true; await new Promise((r) => setTimeout(r, 150)); }
+      return false;
+    };
+    await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
+    await send('Page.navigate', { url: base + '/' });
+
+    await check('ui/login screen renders', () => waitFor(`!!document.getElementById('connectionForm') && document.readyState === 'complete'`) || 'no login form');
+    await check('ui/vendored libraries load (socket.io, hls, mpegts)', async () =>
+      (await evaluate(`typeof io === 'function' && typeof Hls !== 'undefined' && typeof mpegts !== 'undefined'`)) || 'a library is missing');
+    await check('ui/login via the form reaches the app and connects the socket', async () => {
+      await evaluate(`(() => { username.value = 'admin'; password.value = 'admin123';
+        connectionForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); })()`);
+      return (await waitFor(`getComputedStyle(connectionScreen).display === 'none' && !!(state.socket && state.socket.connected)`)) || 'still on login or socket not connected';
+    });
+    await check('ui/opens a text channel', async () =>
+      (await waitFor(`!!(state.currentChannel && document.getElementById('messageInput')) && document.body.innerText.includes('conformance hello')`)) ||
+      `no channel selected; channels=${await evaluate('JSON.stringify((state.channels||[]).map(c=>c.type))')} render=${await evaluate(`(() => { try { renderChannels(); return 'ok'; } catch (e) { return e.stack.split('\\n').slice(0, 3).join(' '); } })()`)} select=${await evaluate(`selectChannel(state.channels.find(c => c.type === 'text')).then(() => 'ok', e => e.stack.split('\\n').slice(0, 3).join(' '))`)}`);
+    await check('ui/sending a message from the chat box stores and shows it', async () => {
+      const text = `ui conformance ${Date.now()}`;
+      await evaluate(`(() => { messageInput.value = ${JSON.stringify(text)}; sendMessage(); })()`);
+      const shown = await waitFor(`document.body.innerText.includes(${JSON.stringify(text)})`);
+      const ch = await evaluate('state.currentChannel._id');
+      const login = await http('POST', '/api/auth/login', null, { username: 'admin', password: 'admin123' });
+      const r = await http('GET', `/api/channels/${ch}/messages`, login.json?.token);
+      const list = Array.isArray(r.json) ? r.json : r.json?.messages || [];
+      return (shown && list.some((m) => m.content === text)) || `shown:${shown} stored:${list.some((m) => m.content === text)}`;
+    });
+    const shot = async (name) => {
+      if (!args.has('--screenshots')) return;
+      const { result } = await send('Page.captureScreenshot', { format: 'png' });
+      fs.mkdirSync(path.join(ROOT, 'docs/screenshots'), { recursive: true });
+      fs.writeFileSync(path.join(ROOT, 'docs/screenshots', name), Buffer.from(result.data, 'base64'));
+    };
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    await new Promise((r) => setTimeout(r, 300));
+    await shot('desktop-chat.png');
+
+    // Touch gamepad (Game Together on phones): a phone-sized touch screen, real touch events.
+    await send('Emulation.setDeviceMetricsOverride', { width: 860, height: 400, deviceScaleFactor: 2, mobile: true });
+    await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+    const center = (sel) => evaluate(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const touch = (type, pts) => send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+    await check('ui/touch pad appears for Game Together when no controller is connected', async () => {
+      await evaluate(`localStorage.removeItem('emberlan-touchpad'); touchPad.start()`);
+      return (await evaluate(`touchPad.visible && getComputedStyle(document.getElementById('touchPad')).display !== 'none'`)) || 'pad not shown';
+    });
+    await check('ui/touch pad: two fingers press A and push the left stick at once', async () => {
+      const a = await center('.tp-a'), s = await center('[data-id="LSTICK"]');
+      await touch('touchStart', [{ ...a, id: 1 }, { x: s.x + 60, y: s.y, id: 2 }]);
+      await new Promise((r) => setTimeout(r, 100));
+      const r = await evaluate('touchPad.read()');
+      await touch('touchEnd', []);
+      const after = await evaluate('touchPad.read()');
+      return (r?.buttons.A === true && r.axes.LEFT_X > 0.5 && after.buttons.A === false && after.axes.LEFT_X === 0) || JSON.stringify({ r, after });
+    });
+    await shot('android-touchpad.png');
+    await check('ui/touch pad: layout edits are saved', async () => {
+      await evaluate(`document.querySelector('.tp-bar .tp-tool').click()`);
+      const a = await center('.tp-a');
+      await touch('touchStart', [{ ...a, id: 3 }]);
+      await touch('touchMove', [{ x: a.x - 200, y: a.y - 100, id: 3 }]);
+      await touch('touchEnd', []);
+      await evaluate(`document.querySelector('.tp-bar .tp-tool').click()`);
+      const saved = await evaluate(`JSON.parse(localStorage.getItem('emberlan-touchpad'))?.controls?.A`);
+      return (saved && saved.x < 80) || `saved: ${JSON.stringify(saved)}`;
+    });
+    await evaluate('touchPad.stop()');
+
+    await check('ui/no JavaScript errors during the flow', () => !errors.length || errors.slice(0, 5).join(' | '));
+  } finally {
+    try { ws?.close(); } catch {}
+    br.kill();
+    await new Promise((r) => setTimeout(r, 500));
+    try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
   }
 }
 

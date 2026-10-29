@@ -29,14 +29,31 @@ const ENABLE_HTTPS = process.env.ENABLE_HTTPS === 'true';
 const FEDERATION_ENABLED = process.env.FEDERATION_ENABLED === 'true';
 
 // Middleware
+// CSP for the bundled web client (client/public). Scripts only from this origin
+// (vendor libs are bundled, not CDN). Media, images and API/socket traffic may go
+// to other hosts: bots stream from Plex/Jellyfin/IPTV, and desktop users join any server.
+// ponytail: script-src-attr allows inline handlers because app.js renders ~190
+// onclick="..." attributes; moving them to addEventListener lets this go back to 'none'.
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: {
+    directives: {
+      scriptSrc: ["'self'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:', 'http:'],
+      mediaSrc: ["'self'", 'blob:', 'https:', 'http:'],
+      connectSrc: ["'self'", 'ws:', 'wss:', 'https:', 'http:'],
+      frameSrc: ["'self'", 'https://www.youtube.com', 'https://player.twitch.tv'],
+    },
+  },
 }));
 
-app.use(cors({
-  origin: [CLIENT_URL, 'http://localhost:3000', 'http://localhost:5000'],
-  credentials: true
-}));
+// Any origin: the desktop app (file://, Origin "null") and Android
+// (https://emberlan.local) connect to whatever server the user types in.
+// Safe because auth is a Bearer token, never a cookie.
+app.use(cors({ origin: '*' }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -84,11 +101,7 @@ if (ENABLE_HTTPS && fs.existsSync('./ssl/key.pem') && fs.existsSync('./ssl/cert.
 
 // Initialize Socket.IO
 const io = new Server(server, {
-  cors: {
-    origin: [CLIENT_URL, 'http://localhost:3000', 'http://localhost:5000'],
-    methods: ['GET', 'POST'],
-    credentials: true
-  },
+  cors: { origin: '*' }, // same reason as the REST cors() above
   transports: ['websocket', 'polling']
 });
 

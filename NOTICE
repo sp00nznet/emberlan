@@ -1,0 +1,6 @@
+Emberlan bundles these third-party libraries in client/public/vendor/,
+unmodified. Their licenses are in LICENSES/.
+
+- socket.io-client 4.7.2  (MIT)        https://github.com/socketio/socket.io
+- hls.js 1.5.7            (Apache-2.0) https://github.com/video-dev/hls.js
+- mpegts.js 1.7.3         (Apache-2.0) https://github.com/xqq/mpegts.js

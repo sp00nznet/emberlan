@@ -76,7 +76,8 @@ const handleFederatedServerConnection = async (io, socket) => {
   // Update server status
   server.status = 'active';
   server.lastHeartbeat = new Date();
-  await server.save();
+  // Not awaited: handlers below must register in this tick (see handleUserConnection).
+  server.save().catch((e) => console.error('federation status save failed:', e.message));
 
   // ===== Federation Heartbeat =====
   socket.on('federation:heartbeat', async (data) => {

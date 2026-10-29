@@ -12,15 +12,15 @@
     "run:android": "npx cap run android"
   },
   "dependencies": {
-    "@capacitor/android": "^5.6.0",
-    "@capacitor/app": "^5.0.6",
-    "@capacitor/core": "^5.6.0",
-    "@capacitor/keyboard": "^5.0.6",
-    "@capacitor/status-bar": "^5.0.6",
-    "@capacitor/splash-screen": "^5.0.6"
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/keyboard": "^7.0.0",
+    "@capacitor/splash-screen": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.0"
   },
   "devDependencies": {
-    "@capacitor/cli": "^5.6.0",
+    "@capacitor/cli": "^7.0.0",
     "fs-extra": "^11.2.0"
   },
   "author": "Emberlan",

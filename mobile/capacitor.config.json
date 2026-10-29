@@ -5,7 +5,8 @@
   "server": {
     "androidScheme": "https",
     "iosScheme": "https",
-    "hostname": "emberlan.local"
+    "hostname": "emberlan.local",
+    "cleartext": true
   },
   "plugins": {
     "SplashScreen": {

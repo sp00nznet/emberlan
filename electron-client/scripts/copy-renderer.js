@@ -15,10 +15,8 @@ async function copyRenderer() {
   console.log('Syncing renderer from client/public...');
   try {
     await fs.ensureDir(dest);
-    // Copy the UI files, leaving anything else in renderer/ untouched.
-    for (const file of ['index.html', 'app.js', 'styles.css', 'logo.svg']) {
-      await fs.copy(path.join(src, file), path.join(dest, file));
-    }
+    await fs.emptyDir(dest);
+    await fs.copy(src, dest);
     console.log(`Renderer synced from ${src}`);
   } catch (error) {
     console.error('Failed to sync renderer:', error);
