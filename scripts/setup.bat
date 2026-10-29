@@ -1,17 +1,17 @@
 @echo off
 REM ============================================
-REM F7Lans - Complete Setup Script for Windows
+REM Emberlan - Complete Setup Script for Windows
 REM ============================================
-REM This script sets up the entire F7Lans project
+REM This script sets up the entire Emberlan project
 REM including server, web client, and Electron client
 REM ============================================
 
-title F7Lans Setup
+title Emberlan Setup
 setlocal enabledelayedexpansion
 
 echo.
 echo  ======================================
-echo   F7Lans Gaming Community Platform
+echo   Emberlan Gaming Community Platform
 echo   Windows Setup Script
 echo  ======================================
 echo.
@@ -97,7 +97,7 @@ if not exist ".env" (
             echo SERVER_URL=http://localhost:3001
             echo CLIENT_URL=http://localhost:3000
             echo FEDERATION_ENABLED=true
-            echo FEDERATION_SERVER_NAME=F7Lans Server
+            echo FEDERATION_SERVER_NAME=Emberlan Server
         ) > .env
         echo        Created default .env file
         echo        [IMPORTANT] Please edit .env with your configuration!

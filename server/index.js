@@ -62,7 +62,7 @@ app.use('/api', apiRoutes);
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    name: 'F7Lans Server',
+    name: 'Emberlan Server',
     version: '1.0.0',
     federationEnabled: FEDERATION_ENABLED,
     timestamp: new Date().toISOString()
@@ -118,8 +118,8 @@ const startServer = async () => {
     if (!adminExists) {
       const defaultAdmin = new User({
         username: 'admin',
-        displayName: 'F7 Admin',
-        email: 'admin@f7lans.local',
+        displayName: 'Admin',
+        email: 'admin@emberlan.local',
         password: 'admin123', // Change this in production!
         role: 'superadmin'
       });
@@ -293,7 +293,7 @@ const startServer = async () => {
       console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
-║   🎮  F7Lans Server v1.0.0                               ║
+║   🎮  Emberlan Server v1.0.0                               ║
 ║                                                           ║
 ║   Server running on port ${PORT}                            ║
 ║   ${ENABLE_HTTPS ? 'HTTPS' : 'HTTP'}: ${ENABLE_HTTPS ? 'https' : 'http'}://localhost:${PORT}                       ║

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================
-# F7Lans - Docker Build Script
+# Emberlan - Docker Build Script
 # ============================================
 # Builds all Docker containers
 # Requires Docker and Docker Compose
@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 
 echo ""
 echo "  ======================================"
-echo "   F7Lans Docker Build"
+echo "   Emberlan Docker Build"
 echo "  ======================================"
 echo ""
 

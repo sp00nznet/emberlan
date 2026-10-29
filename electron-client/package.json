@@ -1,29 +1,24 @@
 {
-  "name": "f7lans-client",
+  "name": "emberlan-client",
   "version": "1.0.0",
-  "description": "F7Lans Desktop Client - Gaming Community Platform",
-  "homepage": "https://github.com/sp00nznet/f7lans",
+  "description": "Emberlan Desktop Client - Gaming Community Platform",
+  "homepage": "https://github.com/sp00nznet/emberlan",
   "main": "main.js",
   "scripts": {
     "prestart": "npm run copy-renderer",
     "start": "electron .",
     "copy-renderer": "node scripts/copy-renderer.js",
-    "start:embedded": "F7LANS_EMBEDDED_SERVER=true electron .",
-    "start:headless": "F7LANS_HEADLESS=true F7LANS_EMBEDDED_SERVER=true electron .",
+    "start:embedded": "electron . --embedded-server",
+    "start:headless": "electron . --embedded-server --headless",
     "build": "npm run copy-renderer && electron-builder",
     "build:win": "npm run copy-renderer && electron-builder --win",
     "build:win:unified": "npm run copy-renderer && npm run copy-server && electron-builder --win -c electron-builder-unified.json",
     "build:win:headless": "npm run copy-server && electron-builder --win -c electron-builder-headless.json",
-    "build:mac": "electron-builder --mac",
-    "build:mac:unified": "npm run copy-server && electron-builder --mac -c electron-builder-unified.json",
-    "build:linux": "electron-builder --linux",
-    "build:linux:unified": "npm run copy-server && electron-builder --linux -c electron-builder-unified.json",
-    "build:linux:headless": "npm run copy-server && electron-builder --linux -c electron-builder-headless.json",
     "copy-server": "node scripts/copy-server.js"
   },
   "build": {
-    "appId": "com.f7lans.client",
-    "productName": "F7Lans",
+    "appId": "com.emberlan.client",
+    "productName": "Emberlan",
     "directories": {
       "output": "dist"
     },
@@ -36,25 +31,19 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64", "ia32"]
+          "arch": [
+            "x64",
+            "ia32"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico"
-    },
-    "mac": {
-      "target": "dmg",
-      "icon": "assets/icon.icns",
-      "category": "public.app-category.social-networking"
-    },
-    "linux": {
-      "target": ["AppImage", "deb"],
-      "icon": "assets/icon.png",
-      "category": "Network",
-      "maintainer": "F7Lans <admin@f7lans.com>"
     },
     "nsis": {
       "oneClick": false,
@@ -72,8 +61,8 @@
     "fs-extra": "^11.2.0"
   },
   "author": {
-    "name": "F7Lans",
-    "email": "admin@f7lans.com"
+    "name": "Emberlan",
+    "email": "admin@emberlan.com"
   },
   "license": "MIT"
 }

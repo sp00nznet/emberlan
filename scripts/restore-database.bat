@@ -1,15 +1,15 @@
 @echo off
 REM ============================================
-REM F7Lans - Database Restore Script
+REM Emberlan - Database Restore Script
 REM ============================================
 REM Restores a MongoDB database from backup
 REM ============================================
 
-title F7Lans Database Restore
+title Emberlan Database Restore
 
 echo.
 echo  ======================================
-echo   F7Lans Database Restore
+echo   Emberlan Database Restore
 echo  ======================================
 echo.
 
@@ -48,12 +48,12 @@ echo.
 echo Restoring database...
 
 REM Check if running in Docker
-docker ps | findstr /i "f7lans-mongodb" >nul 2>&1
+docker ps | findstr /i "emberlan-mongodb" >nul 2>&1
 if not errorlevel 1 (
     echo Restoring to Docker container...
-    docker cp "backups\%backup_name%" f7lans-mongodb:/tmp/restore
-    docker exec f7lans-mongodb mongorestore --db f7lans --drop /tmp/restore
-    docker exec f7lans-mongodb rm -rf /tmp/restore
+    docker cp "backups\%backup_name%" emberlan-mongodb:/tmp/restore
+    docker exec emberlan-mongodb mongorestore --db f7lans --drop /tmp/restore
+    docker exec emberlan-mongodb rm -rf /tmp/restore
 ) else (
     REM Local MongoDB
     mongorestore --version >nul 2>&1

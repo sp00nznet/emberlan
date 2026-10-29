@@ -1,8 +1,8 @@
 @echo off
 REM ================================================================
-REM F7Lans Standalone Client Build Script (Windows)
+REM Emberlan Standalone Client Build Script (Windows)
 REM Builds the Electron client WITHOUT the embedded server
-REM Users connect to remote F7Lans servers
+REM Users connect to remote Emberlan servers
 REM ================================================================
 
 echo.

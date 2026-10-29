@@ -1,15 +1,15 @@
 @echo off
 REM ============================================
-REM F7Lans - Quick Start Script
+REM Emberlan - Quick Start Script
 REM ============================================
 REM One-click setup and start using Docker
 REM ============================================
 
-title F7Lans Quick Start
+title Emberlan Quick Start
 
 echo.
 echo  ======================================
-echo   F7Lans Quick Start
+echo   Emberlan Quick Start
 echo  ======================================
 echo.
 echo  This will:
@@ -50,7 +50,7 @@ if errorlevel 1 (
 echo Docker is running.
 
 echo.
-echo Starting F7Lans with Docker...
+echo Starting Emberlan with Docker...
 echo This may take a few minutes on first run...
 echo.
 
@@ -83,7 +83,7 @@ if errorlevel 1 (
 
 echo.
 echo  ======================================
-echo   F7Lans is now running!
+echo   Emberlan is now running!
 echo  ======================================
 echo.
 echo  Web Interface: http://localhost:3001

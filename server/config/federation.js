@@ -8,7 +8,7 @@ const federationConfig = {
   serverId: null,
 
   // This server's name in the federation
-  serverName: process.env.FEDERATION_SERVER_NAME || 'F7Lans Server',
+  serverName: process.env.FEDERATION_SERVER_NAME || 'Emberlan Server',
 
   // This server's public URL
   serverUrl: process.env.SERVER_URL || process.env.CLIENT_URL || 'http://localhost:3001',

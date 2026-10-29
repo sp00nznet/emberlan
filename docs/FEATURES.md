@@ -9,7 +9,7 @@
 ╚═╝        ╚═╝  ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝
 ```
 
-Detailed overview of everything F7Lans can do.
+Detailed overview of everything Emberlan can do.
 
 ---
 
@@ -136,7 +136,7 @@ Share your gameplay, presentations, or applications — up to **8K resolution**.
 | 8K | 7680x4320 | 30 | Maximum quality |
 
 **Comparison vs Discord:**
-| | F7Lans | Discord Free | Discord Nitro |
+| | Emberlan | Discord Free | Discord Nitro |
 |:--|:------:|:------------:|:-------------:|
 | Max Resolution | 8K | 720p | 1080p |
 | Max FPS | 60 | 30 | 60 |
@@ -243,7 +243,7 @@ Connect your Steam account.
 3. Profile must be public for game data
 
 **Features:**
-- Steam profile link in your F7Lans profile
+- Steam profile link in your Emberlan profile
 - Others can view your Steam profile
 - Game library comparison
 
@@ -286,7 +286,7 @@ AI-powered game recommendations.
 
 ## Media Bots
 
-F7Lans includes 8 built-in bots. Admins enable bots globally and can control which bots are available in each channel. Users with permission can use enabled bots.
+Emberlan includes 8 built-in bots. Admins enable bots globally and can control which bots are available in each channel. Users with permission can use enabled bots.
 
 ### YouTube Bot
 
@@ -461,14 +461,14 @@ Game Together lets remote players join local multiplayer games by emulating virt
 │        │                            │ Gamepad API              │
 │        │                            ▼                          │
 │        │                     ┌──────────────┐                  │
-│        │                     │ F7Lans       │                  │
+│        │                     │ Emberlan       │                  │
 │        │                     │ Client       │                  │
 │        │                     │ (Web/Desktop)│                  │
 │        │                     └──────┬───────┘                  │
 │        │                            │ 60Hz input               │
 │        │                            ▼                          │
 │        │                     ┌──────────────┐                  │
-│        │                     │ F7Lans       │                  │
+│        │                     │ Emberlan       │                  │
 │        │                     │ Server       │                  │
 │        │                     └──────┬───────┘                  │
 │        │                            │ WebSocket                │
@@ -502,7 +502,7 @@ Game Together lets remote players join local multiplayer games by emulating virt
 | macOS | Not supported | Use Parsec as alternative |
 
 **Remote Players:**
-- Any F7Lans client (Desktop or Web)
+- Any Emberlan client (Desktop or Web)
 - Xbox controller (or any XInput-compatible gamepad)
 - Works in browsers via the Web Gamepad API
 
@@ -510,7 +510,7 @@ Game Together lets remote players join local multiplayer games by emulating virt
 
 **As Host:**
 1. Install ViGEmBus driver (Windows)
-2. Join a voice channel in F7Lans
+2. Join a voice channel in Emberlan
 3. Click "Bots" → "Game Together"
 4. Click "Start Hosting"
 5. Launch your local multiplayer game
@@ -852,7 +852,7 @@ Minimal footprint while gaming.
 - Minimize to tray (close button = tray)
 - Tray icon status indicator
 - Right-click menu
-  - Open F7Lans
+  - Open Emberlan
   - Status (Online/Away/Busy)
   - Mute
   - Quit
@@ -936,11 +936,11 @@ Stay informed.
 
 ## Multi-Server Support
 
-Connect to multiple F7Lans communities from a single client.
+Connect to multiple Emberlan communities from a single client.
 
 ### Overview
 
-The desktop client supports connecting to multiple F7Lans servers simultaneously, allowing you to be part of multiple gaming communities without switching applications.
+The desktop client supports connecting to multiple Emberlan servers simultaneously, allowing you to be part of multiple gaming communities without switching applications.
 
 ### Adding Servers
 
@@ -990,7 +990,7 @@ The standalone client has no embedded server, resulting in a smaller download an
 
 ## Theming
 
-Customize the look of your F7Lans client.
+Customize the look of your Emberlan client.
 
 ### Available Themes
 
@@ -1035,7 +1035,7 @@ Admins can set a default theme for their server:
 
 ### What is Federation?
 
-Connect multiple F7Lans servers together.
+Connect multiple Emberlan servers together.
 
 **Use Cases:**
 - Gaming clan alliances
@@ -1129,7 +1129,7 @@ Track what games and activities users are engaged in.
 
 ### How It Works
 
-F7Lans automatically detects and displays user activities:
+Emberlan automatically detects and displays user activities:
 
 1. Desktop client detects running games/applications
 2. Activity is displayed on user's profile
@@ -1168,7 +1168,7 @@ Find games to play with friends:
 
 ## Social Account Linking
 
-Connect your gaming profiles to your F7Lans account.
+Connect your gaming profiles to your Emberlan account.
 
 ### Supported Platforms
 
@@ -1194,7 +1194,7 @@ Steam uses secure OAuth verification:
 
 1. Click "Link Steam Account"
 2. Redirect to Steam login
-3. Authorize F7Lans
+3. Authorize Emberlan
 4. Account verified automatically
 
 ### Other Platform Verification
@@ -1204,8 +1204,8 @@ For platforms without OAuth:
 1. Enter your username
 2. Receive a verification code
 3. Post the code on the platform (profile bio, tweet, etc.)
-4. Click "Verify" in F7Lans
-5. F7Lans confirms verification
+4. Click "Verify" in Emberlan
+5. Emberlan confirms verification
 
 ### Profile Display
 
@@ -1302,4 +1302,4 @@ Features in development:
 
 ---
 
-Have feature requests? [Open an issue](https://github.com/yourusername/f7lans/issues)!
+Have feature requests? [Open an issue](https://github.com/yourusername/emberlan/issues)!

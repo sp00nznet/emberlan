@@ -1,14 +1,14 @@
 @echo off
 REM ============================================
-REM F7Lans - Start Server Script for Windows
+REM Emberlan - Start Server Script for Windows
 REM ============================================
 
-title F7Lans Server
+title Emberlan Server
 setlocal enabledelayedexpansion
 
 echo.
 echo  ======================================
-echo   F7Lans Server
+echo   Emberlan Server
 echo  ======================================
 echo.
 
@@ -71,7 +71,7 @@ if not exist ".env" (
             echo SERVER_URL=http://localhost:3001
             echo CLIENT_URL=http://localhost:3000
             echo FEDERATION_ENABLED=true
-            echo FEDERATION_SERVER_NAME=F7Lans Server
+            echo FEDERATION_SERVER_NAME=Emberlan Server
         ) > .env
     )
     echo [IMPORTANT] Please edit .env with your configuration!
@@ -84,7 +84,7 @@ if not exist "server\index.js" (
     echo [ERROR] Server files not found!
     echo.
     echo The file 'server\index.js' is missing.
-    echo Make sure you have the complete F7Lans source code.
+    echo Make sure you have the complete Emberlan source code.
     echo.
     pause
     exit /b 1
@@ -92,7 +92,7 @@ if not exist "server\index.js" (
 
 echo [OK] All checks passed
 echo.
-echo Starting F7Lans server...
+echo Starting Emberlan server...
 echo Press Ctrl+C to stop the server.
 echo.
 echo ----------------------------------------

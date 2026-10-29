@@ -1,6 +1,6 @@
 @echo off
 REM ============================================
-REM F7Lans - Build All Electron Variants
+REM Emberlan - Build All Electron Variants
 REM ============================================
 REM Builds:
 REM   - Windows x64 installer
@@ -8,11 +8,11 @@ REM   - Windows x64 portable
 REM   - Windows x86 (32-bit) installer
 REM ============================================
 
-title F7Lans Electron Build (All)
+title Emberlan Electron Build (All)
 
 echo.
 echo  ======================================
-echo   F7Lans Electron Client Builder
+echo   Emberlan Electron Client Builder
 echo   Building all Windows variants...
 echo  ======================================
 echo.

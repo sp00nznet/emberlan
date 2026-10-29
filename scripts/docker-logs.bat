@@ -1,13 +1,13 @@
 @echo off
 REM ============================================
-REM F7Lans - Docker Logs Viewer for Windows
+REM Emberlan - Docker Logs Viewer for Windows
 REM ============================================
 
-title F7Lans Docker Logs
+title Emberlan Docker Logs
 
 echo.
 echo  ======================================
-echo   F7Lans Docker Logs
+echo   Emberlan Docker Logs
 echo  ======================================
 echo.
 echo  Press Ctrl+C to exit log viewer

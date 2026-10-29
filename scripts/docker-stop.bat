@@ -1,19 +1,19 @@
 @echo off
 REM ============================================
-REM F7Lans - Docker Stop Script for Windows
+REM Emberlan - Docker Stop Script for Windows
 REM ============================================
 
-title F7Lans Docker Stop
+title Emberlan Docker Stop
 
 echo.
 echo  ======================================
-echo   F7Lans Docker Stop
+echo   Emberlan Docker Stop
 echo  ======================================
 echo.
 
 cd /d "%~dp0.."
 
-echo Stopping F7Lans containers...
+echo Stopping Emberlan containers...
 
 docker-compose down
 

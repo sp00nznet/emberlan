@@ -1,5 +1,5 @@
 # ============================================
-# F7Lans - One-Click Electron Build for Windows
+# Emberlan - One-Click Electron Build for Windows
 # ============================================
 # This script installs all required dependencies
 # and builds the Electron client for Windows
@@ -26,7 +26,7 @@ function Write-Info($message) { Write-Host "  [INFO] $message" -ForegroundColor 
 
 Write-Host ""
 Write-Host "  ======================================" -ForegroundColor Cyan
-Write-Host "   F7Lans Electron Client Builder" -ForegroundColor Cyan
+Write-Host "   Emberlan Electron Client Builder" -ForegroundColor Cyan
 Write-Host "   One-Click Build for Windows" -ForegroundColor Cyan
 Write-Host "  ======================================" -ForegroundColor Cyan
 Write-Host ""

@@ -36,7 +36,7 @@ async function copyServer() {
 
     const pkg = await fs.readJson(rootPackage);
     await fs.writeJson(serverPackage, {
-      name: 'f7lans-server',
+      name: 'emberlan-server',
       version: pkg.version,
       main: 'index.js',
       dependencies: pkg.dependencies

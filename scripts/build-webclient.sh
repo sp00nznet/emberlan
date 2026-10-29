@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================
-# F7Lans - Web Client Docker Build Script
+# Emberlan - Web Client Docker Build Script
 # ============================================
 # One-click build for the containerized web client
 # ============================================
@@ -14,12 +14,12 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-IMAGE_NAME="f7lans-webclient"
+IMAGE_NAME="emberlan-webclient"
 IMAGE_TAG="${1:-latest}"
 
 echo ""
 echo "  ======================================"
-echo "   F7Lans Web Client Docker Build"
+echo "   Emberlan Web Client Docker Build"
 echo "  ======================================"
 echo ""
 
@@ -100,7 +100,7 @@ echo -e "  ${CYAN}Run standalone:${NC}"
 echo "    docker run -d -p 3000:80 \\"
 echo "      -e API_HOST=host.docker.internal \\"
 echo "      -e API_PORT=3001 \\"
-echo "      --name f7lans-webclient \\"
+echo "      --name emberlan-webclient \\"
 echo "      ${IMAGE_NAME}:${IMAGE_TAG}"
 echo ""
 echo -e "  ${CYAN}Run with docker-compose (recommended):${NC}"

@@ -11,7 +11,7 @@ const serverSettingsSchema = new mongoose.Schema({
   // Server name and branding
   serverName: {
     type: String,
-    default: 'F7Lans'
+    default: 'Emberlan'
   },
   serverDescription: {
     type: String,

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Deep dive into F7Lans system design, components, and data flow.
+Deep dive into Emberlan system design, components, and data flow.
 
 ---
 
@@ -19,7 +19,7 @@ Deep dive into F7Lans system design, components, and data flow.
 
 ## System Overview
 
-F7Lans is a full-stack real-time communication platform with the following high-level architecture:
+Emberlan is a full-stack real-time communication platform with the following high-level architecture:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -667,10 +667,10 @@ function verifyAuth(header, expectedServerId, sharedSecret) {
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │                  Docker Network: f7lans                  │   │
+│  │                  Docker Network: emberlan                  │   │
 │  │                                                          │   │
 │  │  ┌──────────────┐         ┌──────────────┐             │   │
-│  │  │   f7lans     │         │   mongodb    │             │   │
+│  │  │   emberlan     │         │   mongodb    │             │   │
 │  │  │   server     │────────►│   container  │             │   │
 │  │  │              │         │              │             │   │
 │  │  │  Port: 3001  │         │  Port: 27017 │             │   │
@@ -715,7 +715,7 @@ function verifyAuth(header, expectedServerId, sharedSecret) {
 │              │             │             │                      │
 │              ▼             ▼             ▼                      │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐            │
-│  │  F7Lans #1   │ │  F7Lans #2   │ │  F7Lans #3   │            │
+│  │  Emberlan #1   │ │  Emberlan #2   │ │  Emberlan #3   │            │
 │  │  (Primary)   │ │  (Replica)   │ │  (Replica)   │            │
 │  └──────────────┘ └──────────────┘ └──────────────┘            │
 │              │             │             │                      │

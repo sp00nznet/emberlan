@@ -1,15 +1,15 @@
 @echo off
 REM ============================================
-REM F7Lans - Full Rebuild Script for Windows
+REM Emberlan - Full Rebuild Script for Windows
 REM ============================================
 REM Cleans and rebuilds everything from scratch
 REM ============================================
 
-title F7Lans Full Rebuild
+title Emberlan Full Rebuild
 
 echo.
 echo  ======================================
-echo   F7Lans Full Rebuild
+echo   Emberlan Full Rebuild
 echo  ======================================
 echo.
 echo  This will:

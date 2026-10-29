@@ -1,8 +1,8 @@
 #!/bin/bash
 # ================================================================
-# F7Lans Standalone Client Build Script (Linux)
+# Emberlan Standalone Client Build Script (Linux)
 # Builds the Electron client WITHOUT the embedded server
-# Users connect to remote F7Lans servers
+# Users connect to remote Emberlan servers
 # ================================================================
 
 echo ""

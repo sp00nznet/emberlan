@@ -1,16 +1,16 @@
 @echo off
 REM ============================================
-REM F7Lans - Docker Build Script for Windows
+REM Emberlan - Docker Build Script for Windows
 REM ============================================
 REM Builds all Docker containers
 REM Requires Docker Desktop for Windows
 REM ============================================
 
-title F7Lans Docker Build
+title Emberlan Docker Build
 
 echo.
 echo  ======================================
-echo   F7Lans Docker Build
+echo   Emberlan Docker Build
 echo  ======================================
 echo.
 

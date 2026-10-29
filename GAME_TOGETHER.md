@@ -40,7 +40,7 @@ Game Together is a feature that allows multiple players to play local multiplaye
 **Installation:**
 1. Download ViGEmBus from: https://github.com/ViGEm/ViGEmBus/releases
 2. Install the driver
-3. Restart F7Lans server
+3. Restart Emberlan server
 4. Game Together will automatically detect and use ViGEmBus
 
 ### Linux
@@ -224,4 +224,4 @@ POST /api/admin/game-together/input
 
 ## Contributing
 
-Found a bug or have a suggestion? Please open an issue on the F7Lans GitHub repository!
+Found a bug or have a suggestion? Please open an issue on the Emberlan GitHub repository!

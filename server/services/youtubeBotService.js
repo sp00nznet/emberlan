@@ -1,4 +1,4 @@
-// YouTube Bot Service for F7Lans
+// YouTube Bot Service for Emberlan
 // Allows admins to play YouTube audio in voice channels
 
 const ytdl = require('@distube/ytdl-core');

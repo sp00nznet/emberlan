@@ -1,11 +1,11 @@
 #!/bin/sh
-# F7Lans Web Client Entrypoint
+# Emberlan Web Client Entrypoint
 # Substitutes environment variables in nginx config
 
 set -e
 
 # Default values
-export API_HOST=${API_HOST:-f7lans-server}
+export API_HOST=${API_HOST:-emberlan-server}
 export API_PORT=${API_PORT:-3001}
 
 # Substitute environment variables in nginx config

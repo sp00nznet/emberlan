@@ -1,16 +1,16 @@
 @echo off
 REM ============================================
-REM F7Lans - SSL Certificate Generator
+REM Emberlan - SSL Certificate Generator
 REM ============================================
 REM Generates self-signed SSL certificates for HTTPS
 REM For production, use proper certificates from Let's Encrypt
 REM ============================================
 
-title F7Lans SSL Generator
+title Emberlan SSL Generator
 
 echo.
 echo  ======================================
-echo   F7Lans SSL Certificate Generator
+echo   Emberlan SSL Certificate Generator
 echo  ======================================
 echo.
 
@@ -47,7 +47,7 @@ REM Generate private key and certificate
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 ^
     -keyout docker\ssl\key.pem ^
     -out docker\ssl\cert.pem ^
-    -subj "/C=US/ST=State/L=City/O=F7Lans/OU=Development/CN=localhost"
+    -subj "/C=US/ST=State/L=City/O=Emberlan/OU=Development/CN=localhost"
 
 if errorlevel 1 (
     echo.

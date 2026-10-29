@@ -48,3 +48,9 @@ temp/
 
 # Local tool settings
 .claude/settings.local.json
+server/uploads/*/*
+!server/uploads/avatars/.gitkeep
+# Generated from client/public by electron-client/scripts/copy-renderer.js
+electron-client/renderer/
+mobile/www/
+mobile/node_modules/

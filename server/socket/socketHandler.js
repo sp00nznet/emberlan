@@ -214,8 +214,10 @@ const handleUserConnection = async (io, socket) => {
   connectedUsers.set(user._id.toString(), socket.id);
   userSockets.set(socket.id, user._id.toString());
 
-  // Update user status
-  await User.findByIdAndUpdate(user._id, { status: 'online' });
+  // Update user status. Not awaited: the handlers below must be registered in the
+  // same tick as 'connection', or events the client sends right after connecting
+  // (channel:join, voice:join) are dropped. Caught by conformance live/chat.
+  User.findByIdAndUpdate(user._id, { status: 'online' }).catch((e) => console.error('status update failed:', e.message));
 
   // Broadcast online status
   socket.broadcast.emit('user:status', {

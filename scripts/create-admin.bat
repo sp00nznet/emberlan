@@ -1,15 +1,15 @@
 @echo off
 REM ============================================
-REM F7Lans - Create Admin User Script
+REM Emberlan - Create Admin User Script
 REM ============================================
 REM Creates a new admin user via the API
 REM ============================================
 
-title F7Lans Create Admin
+title Emberlan Create Admin
 
 echo.
 echo  ======================================
-echo   F7Lans - Create Admin User
+echo   Emberlan - Create Admin User
 echo  ======================================
 echo.
 

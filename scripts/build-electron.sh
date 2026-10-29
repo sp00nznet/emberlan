@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================
-# F7Lans - Build Electron Client for Linux
+# Emberlan - Build Electron Client for Linux
 # ============================================
 # Builds the desktop client as:
 #   - AppImage (portable)
@@ -18,7 +18,7 @@ NC='\033[0m' # No Color
 
 echo ""
 echo "  ======================================"
-echo "   F7Lans Electron Client Builder"
+echo "   Emberlan Electron Client Builder"
 echo "   Building for Linux..."
 echo "  ======================================"
 echo ""
@@ -128,7 +128,7 @@ fi
 
 echo ""
 echo -e "  ${CYAN}Install .deb package:${NC}"
-echo "    sudo dpkg -i dist/f7lans*.deb"
+echo "    sudo dpkg -i dist/emberlan*.deb"
 echo ""
 echo -e "  ${CYAN}Run AppImage:${NC}"
 echo "    chmod +x dist/*.AppImage && ./dist/*.AppImage"

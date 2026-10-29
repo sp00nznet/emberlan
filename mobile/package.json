@@ -1,27 +1,20 @@
 {
-  "name": "f7lans-mobile",
+  "name": "emberlan-mobile",
   "version": "1.0.0",
-  "description": "F7Lans Mobile Client - Gaming Community Platform",
+  "description": "Emberlan Mobile Client - Gaming Community Platform",
   "main": "index.js",
   "scripts": {
-    "build:web": "npm run copy-client",
     "copy-client": "node scripts/copy-client.js",
-    "cap:init": "npx cap init F7Lans com.f7lans.mobile --web-dir www",
-    "cap:add:ios": "npx cap add ios",
     "cap:add:android": "npx cap add android",
     "cap:sync": "npx cap sync",
-    "cap:open:ios": "npx cap open ios",
     "cap:open:android": "npx cap open android",
-    "build:ios": "npm run build:web && npx cap sync ios",
-    "build:android": "npm run build:web && npx cap sync android",
-    "run:ios": "npx cap run ios",
+    "build:android": "npm run copy-client && npx cap sync android && cd android && gradlew assembleDebug",
     "run:android": "npx cap run android"
   },
   "dependencies": {
     "@capacitor/android": "^5.6.0",
     "@capacitor/app": "^5.0.6",
     "@capacitor/core": "^5.6.0",
-    "@capacitor/ios": "^5.6.0",
     "@capacitor/keyboard": "^5.0.6",
     "@capacitor/status-bar": "^5.0.6",
     "@capacitor/splash-screen": "^5.0.6"
@@ -30,6 +23,6 @@
     "@capacitor/cli": "^5.6.0",
     "fs-extra": "^11.2.0"
   },
-  "author": "F7Lans",
+  "author": "Emberlan",
   "license": "MIT"
 }

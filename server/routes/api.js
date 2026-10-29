@@ -267,7 +267,7 @@ router.get('/stream/proxy', async (req, res) => {
     console.log(`[StreamProxy] Fetching: ${url.substring(0, 100)}...`);
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'F7Lans/1.0'
+        'User-Agent': 'Emberlan/1.0'
       }
     });
 

@@ -1,5 +1,5 @@
-// F7Lans Electron Client
-// Desktop Application for F7Lans Gaming Community
+// Emberlan Electron Client
+// Desktop Application for Emberlan Gaming Community
 
 // Audio context for notification sounds
 let audioContext = null;
@@ -650,7 +650,7 @@ function connectSocket() {
   });
 
   state.socket.on('connect', () => {
-    console.log('Connected to F7Lans server');
+    console.log('Connected to Emberlan server');
     showToast('Connected to server', 'success');
     loadChannels();
   });
@@ -905,7 +905,7 @@ function renderMainApp() {
   const mainApp = document.getElementById('mainApp');
 
   const currentServer = state.servers.find(s => s.id === state.currentServerId);
-  const serverName = currentServer?.name || 'F7Lans';
+  const serverName = currentServer?.name || 'Emberlan';
 
   const userInitial = (state.user?.displayName || state.user?.username || 'U')[0].toUpperCase();
   const userActivity = state.user?.customStatus || 'Online';
@@ -2830,7 +2830,7 @@ async function openSettings() {
           <div class="settings-title">Server Settings</div>
           <div class="settings-desc">Identity, invites and maintenance for this server.</div>
           <div class="grid-2">
-            <div class="field"><div class="field-label">Server name</div><div class="field-value">${escapeHtml(state.servers.find(s => s.id === state.currentServerId)?.name || 'F7Lans')}</div></div>
+            <div class="field"><div class="field-label">Server name</div><div class="field-value">${escapeHtml(state.servers.find(s => s.id === state.currentServerId)?.name || 'Emberlan')}</div></div>
             <div class="field"><div class="field-label">Version</div><div class="field-value mono">v1.0.0</div></div>
           </div>
           ${accent('Invites')}
@@ -3895,7 +3895,7 @@ function renderFederationContent(data) {
     <div class="settings-section" style="margin-bottom: 16px;">
       <h3>This Server</h3>
       <div style="padding: 12px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-top: 12px;">
-        <div style="font-weight: 600;">${escapeHtml(serverName || 'F7Lans Server')}</div>
+        <div style="font-weight: 600;">${escapeHtml(serverName || 'Emberlan Server')}</div>
         <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
           ID: ${serverId || 'Unknown'}<br>
           Federation: ${enabled ? '<span style="color: var(--success);">Enabled</span>' : '<span style="color: var(--danger);">Disabled</span>'}
@@ -6038,7 +6038,7 @@ async function addServer() {
     if (!response.ok) throw new Error(data.error || 'Login failed');
 
     // Get server info
-    let serverName = 'F7Lans Server';
+    let serverName = 'Emberlan Server';
     try {
       const infoRes = await fetch(`${url}/api/federation/info`);
       const infoData = await infoRes.json();
@@ -6544,7 +6544,7 @@ function pollGameTogetherInput() {
 
   // Send via socket for low latency
   if (state.socket) {
-    state.socket.emit('game-together:input', {
+    state.socket.emit('gameTogether:input', {
       hostUserId: state.gameTogether.hostUserId,
       playerSlot: state.gameTogether.playerSlot,
       inputData
@@ -6645,7 +6645,7 @@ async function requestStartGameTogether(hostUserId) {
   try {
     showToast('Starting Game Together session...', 'info');
 
-    const response = await fetch('/api/admin/game-together/start', {
+    const response = await fetch(`${state.serverUrl}/api/admin/game-together/start`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${state.token}`,
@@ -6688,7 +6688,7 @@ async function joinGameTogether(hostUserId) {
   try {
     showToast('Joining Game Together session...', 'info');
 
-    const response = await fetch('/api/admin/game-together/join', {
+    const response = await fetch(`${state.serverUrl}/api/admin/game-together/join`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${state.token}`,
@@ -6725,7 +6725,7 @@ async function leaveGameTogether() {
   if (!state.gameTogether.active) return;
 
   try {
-    const response = await fetch('/api/admin/game-together/leave', {
+    const response = await fetch(`${state.serverUrl}/api/admin/game-together/leave`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${state.token}`,
@@ -6760,7 +6760,7 @@ async function stopGameTogether() {
   if (!state.gameTogether.active || !state.gameTogether.isHost) return;
 
   try {
-    const response = await fetch('/api/admin/game-together/stop', {
+    const response = await fetch(`${state.serverUrl}/api/admin/game-together/stop`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${state.token}`,
@@ -6879,7 +6879,7 @@ async function sendGameTogetherInput(inputData) {
 
   // Also send via HTTP API as backup
   try {
-    await fetch('/api/admin/game-together/input', {
+    await fetch(`${state.serverUrl}/api/admin/game-together/input`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${state.token}`,

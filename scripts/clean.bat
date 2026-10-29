@@ -1,15 +1,15 @@
 @echo off
 REM ============================================
-REM F7Lans - Clean Build Script for Windows
+REM Emberlan - Clean Build Script for Windows
 REM ============================================
 REM Removes all node_modules and build artifacts
 REM ============================================
 
-title F7Lans Clean
+title Emberlan Clean
 
 echo.
 echo  ======================================
-echo   F7Lans Clean
+echo   Emberlan Clean
 echo  ======================================
 echo.
 echo  This will remove:

@@ -1,6 +1,6 @@
 {
-  "appId": "com.f7lans.unified",
-  "productName": "F7Lans",
+  "appId": "com.emberlan.unified",
+  "productName": "Emberlan",
   "directories": {
     "output": "dist/unified"
   },
@@ -13,41 +13,34 @@
     {
       "from": "server",
       "to": "server",
-      "filter": ["**/*"]
+      "filter": [
+        "**/*"
+      ]
     }
   ],
   "win": {
     "target": [
       {
         "target": "nsis",
-        "arch": ["x64"]
+        "arch": [
+          "x64"
+        ]
       },
       {
         "target": "portable",
-        "arch": ["x64"]
+        "arch": [
+          "x64"
+        ]
       }
     ],
     "icon": "assets/icon.ico"
-  },
-  "mac": {
-    "target": ["dmg", "zip"],
-    "icon": "assets/icon.icns",
-    "category": "public.app-category.social-networking",
-    "entitlements": "entitlements.mac.plist",
-    "entitlementsInherit": "entitlements.mac.plist"
-  },
-  "linux": {
-    "target": ["AppImage", "deb", "tar.gz"],
-    "icon": "assets/icon.png",
-    "category": "Network",
-    "maintainer": "F7Lans <admin@f7lans.com>"
   },
   "nsis": {
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "F7Lans"
+    "shortcutName": "Emberlan"
   },
   "extraMetadata": {
     "embeddedServer": true

@@ -1,15 +1,15 @@
 @echo off
 REM ============================================
-REM F7Lans - MongoDB Installation Helper
+REM Emberlan - MongoDB Installation Helper
 REM ============================================
 REM Helps install MongoDB on Windows
 REM ============================================
 
-title F7Lans MongoDB Setup
+title Emberlan MongoDB Setup
 
 echo.
 echo  ======================================
-echo   F7Lans MongoDB Installation Helper
+echo   Emberlan MongoDB Installation Helper
 echo  ======================================
 echo.
 

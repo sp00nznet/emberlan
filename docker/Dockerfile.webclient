@@ -1,4 +1,4 @@
-# F7Lans Web Client Dockerfile
+# Emberlan Web Client Dockerfile
 FROM docker.io/library/nginx:alpine
 
 # Copy nginx configuration template
@@ -12,7 +12,7 @@ RUN chmod +x /docker-entrypoint.sh
 COPY client/public/ /usr/share/nginx/html/
 
 # Environment variables for API connection
-ENV API_HOST=f7lans-server
+ENV API_HOST=emberlan-server
 ENV API_PORT=3001
 
 # Expose port

@@ -1,15 +1,15 @@
 @echo off
 REM ============================================
-REM F7Lans - Docker Start Script for Windows
+REM Emberlan - Docker Start Script for Windows
 REM ============================================
 REM Starts all Docker containers
 REM ============================================
 
-title F7Lans Docker Start
+title Emberlan Docker Start
 
 echo.
 echo  ======================================
-echo   F7Lans Docker Start
+echo   Emberlan Docker Start
 echo  ======================================
 echo.
 
@@ -25,13 +25,13 @@ if errorlevel 1 (
 )
 
 REM Check if containers need to be built
-docker-compose images | findstr /i "f7lans" >nul 2>&1
+docker-compose images | findstr /i "emberlan" >nul 2>&1
 if errorlevel 1 (
     echo Containers not built yet. Building now...
     call docker-compose build
 )
 
-echo Starting F7Lans containers...
+echo Starting Emberlan containers...
 echo.
 
 REM Start containers in detached mode

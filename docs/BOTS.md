@@ -34,7 +34,7 @@ Complete documentation for all 8 built-in bots.
 
 ## Overview
 
-F7Lans includes 8 built-in bots that extend your server's functionality:
+Emberlan includes 8 built-in bots that extend your server's functionality:
 
 | Category | Bots | Count |
 |:---------|:-----|:-----:|
@@ -148,7 +148,7 @@ and exposed:
 - Kodi's web UI was open to the internet through router port forwards.
 - Everyone watched a recompressed screen share instead of the actual file.
 
-On F7Lans we run our own server, so the Jellyfin bot can play into voice channels
+On Emberlan we run our own server, so the Jellyfin bot can play into voice channels
 legitimately: no babysat account, every friend gets the real stream, and the whole
 thing is reachable only over Tailscale (no router ports). Close the old Kodi port
 forwards and retire the projectionist VM once this is running.
@@ -368,4 +368,4 @@ Common patterns:
 
 ---
 
-Have questions? [Open an issue](https://github.com/yourusername/f7lans/issues)!
+Have questions? [Open an issue](https://github.com/yourusername/emberlan/issues)!

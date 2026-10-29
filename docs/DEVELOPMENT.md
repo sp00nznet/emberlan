@@ -1,6 +1,6 @@
 # Development Guide
 
-Everything you need to contribute to F7Lans.
+Everything you need to contribute to Emberlan.
 
 ---
 
@@ -30,8 +30,8 @@ Everything you need to contribute to F7Lans.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/f7lans.git
-cd f7lans
+git clone https://github.com/yourusername/emberlan.git
+cd emberlan
 
 # Install server dependencies
 npm install
@@ -88,7 +88,7 @@ scripts\start-server-dev.bat
 **Option 3: Docker for dependencies only**
 ```bash
 # Start MongoDB in Docker
-docker run -d -p 27017:27017 --name f7lans-mongo mongo:6
+docker run -d -p 27017:27017 --name emberlan-mongo mongo:6
 
 # Run app locally
 npm run dev
@@ -99,7 +99,7 @@ npm run dev
 ## Project Structure
 
 ```
-f7lans/
+emberlan/
 ├── server/                 # Backend application
 │   ├── index.js           # Entry point
 │   ├── config/            # Configuration files
@@ -473,7 +473,7 @@ scripts\build-electron-all.bat
 
 ### Before You Start
 
-1. Check existing [issues](https://github.com/yourusername/f7lans/issues)
+1. Check existing [issues](https://github.com/yourusername/emberlan/issues)
 2. For major changes, open an issue first to discuss
 3. Read this development guide
 
@@ -512,7 +512,7 @@ scripts\build-electron-all.bat
 
 ```bash
 # Enable debug output
-DEBUG=f7lans:* npm run dev
+DEBUG=emberlan:* npm run dev
 
 # Node.js inspector
 node --inspect server/index.js
@@ -565,7 +565,7 @@ npm audit
 rm -rf node_modules && npm install
 
 # Reset database (development)
-mongosh f7lans-dev --eval "db.dropDatabase()"
+mongosh emberlan-dev --eval "db.dropDatabase()"
 ```
 
 ---
@@ -573,7 +573,7 @@ mongosh f7lans-dev --eval "db.dropDatabase()"
 ## Getting Help
 
 - **Documentation**: Check `/docs` folder
-- **Issues**: [GitHub Issues](https://github.com/yourusername/f7lans/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/f7lans/discussions)
+- **Issues**: [GitHub Issues](https://github.com/yourusername/emberlan/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/emberlan/discussions)
 
 Happy coding!

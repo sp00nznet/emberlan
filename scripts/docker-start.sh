@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================
-# F7Lans - Docker Start Script
+# Emberlan - Docker Start Script
 # ============================================
 # Starts all Docker containers
 # ============================================
@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 
 echo ""
 echo "  ======================================"
-echo "   F7Lans Docker Start"
+echo "   Emberlan Docker Start"
 echo "  ======================================"
 echo ""
 
@@ -43,12 +43,12 @@ else
 fi
 
 # Check if containers need to be built
-if ! $COMPOSE_CMD images 2>/dev/null | grep -qi "f7lans"; then
+if ! $COMPOSE_CMD images 2>/dev/null | grep -qi "emberlan"; then
     echo "Containers not built yet. Building now..."
     $COMPOSE_CMD build
 fi
 
-echo "Starting F7Lans containers..."
+echo "Starting Emberlan containers..."
 echo ""
 
 # Start containers in detached mode

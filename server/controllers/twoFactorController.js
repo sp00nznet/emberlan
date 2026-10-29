@@ -119,7 +119,7 @@ const setupStart = async (req, res) => {
     await user.save();
 
     // Generate otpauth URL for QR code
-    const issuer = 'F7Lans';
+    const issuer = 'Emberlan';
     const accountName = user.username;
     const otpauthUrl = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(accountName)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 

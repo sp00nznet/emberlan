@@ -1,17 +1,17 @@
 @echo off
 REM ============================================
-REM F7Lans - Build Electron Client for Windows
+REM Emberlan - Build Electron Client for Windows
 REM ============================================
 REM Builds the desktop client as:
 REM   - NSIS installer (.exe)
 REM   - Portable executable (.exe)
 REM ============================================
 
-title F7Lans Electron Build
+title Emberlan Electron Build
 
 echo.
 echo  ======================================
-echo   F7Lans Electron Client Builder
+echo   Emberlan Electron Client Builder
 echo   Building for Windows...
 echo  ======================================
 echo.

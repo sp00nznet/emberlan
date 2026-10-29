@@ -3,10 +3,13 @@ const path = require('path');
 const Store = require('electron-store');
 const { spawn } = require('child_process');
 
+// EMBERLAN_* env vars; the old F7LANS_* names still work.
+const env = (k) => process.env[`EMBERLAN_${k}`] ?? process.env[`F7LANS_${k}`];
+
 // Check if running in embedded server mode
-const EMBEDDED_SERVER = process.env.F7LANS_EMBEDDED_SERVER === 'true' || process.argv.includes('--embedded-server');
-const HEADLESS_MODE = process.env.F7LANS_HEADLESS === 'true' || process.argv.includes('--headless');
-const SERVER_PORT = process.env.F7LANS_PORT || 3001;
+const EMBEDDED_SERVER = env("EMBEDDED_SERVER") === 'true' || process.argv.includes('--embedded-server');
+const HEADLESS_MODE = env("HEADLESS") === 'true' || process.argv.includes('--headless');
+const SERVER_PORT = env("PORT") || 3001;
 
 // Server process reference
 let serverProcess = null;
@@ -72,7 +75,7 @@ function createWindow() {
       mainWindow.hide();
 
       if (process.platform === 'win32') {
-        showNotification('F7Lans', 'F7Lans is still running in the system tray');
+        showNotification('Emberlan', 'Emberlan is still running in the system tray');
       }
     }
   });
@@ -118,7 +121,7 @@ function createTray() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Show F7Lans',
+      label: 'Show Emberlan',
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -166,7 +169,7 @@ function createTray() {
     }
   ]);
 
-  tray.setToolTip('F7Lans - Gaming Community');
+  tray.setToolTip('Emberlan - Gaming Community');
   tray.setContextMenu(contextMenu);
 
   tray.on('double-click', () => {
@@ -268,7 +271,7 @@ function setupIPC() {
   // Update tray tooltip
   ipcMain.on('update-tray-status', (event, status) => {
     if (tray) {
-      tray.setToolTip(`F7Lans - ${status}`);
+      tray.setToolTip(`Emberlan - ${status}`);
     }
   });
 
@@ -323,7 +326,7 @@ function setupIPC() {
 // Start embedded server
 async function startEmbeddedServer() {
   return new Promise((resolve, reject) => {
-    console.log('Starting embedded F7Lans server...');
+    console.log('Starting embedded Emberlan server...');
 
     // Determine server path - in packaged app, it's in resources
     let serverPath;
@@ -340,7 +343,7 @@ async function startEmbeddedServer() {
       ...process.env,
       PORT: SERVER_PORT,
       NODE_ENV: 'production',
-      F7LANS_DATA_DIR: app.getPath('userData')
+      EMBERLAN_DATA_DIR: app.getPath('userData')
     };
 
     serverProcess = spawn('node', [serverScript], {
@@ -438,7 +441,7 @@ function createHeadlessTray() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: `F7Lans Server (Port ${SERVER_PORT})`,
+      label: `Emberlan Server (Port ${SERVER_PORT})`,
       enabled: false
     },
     { type: 'separator' },
@@ -458,7 +461,7 @@ function createHeadlessTray() {
     }
   ]);
 
-  tray.setToolTip(`F7Lans Server - Port ${SERVER_PORT}`);
+  tray.setToolTip(`Emberlan Server - Port ${SERVER_PORT}`);
   tray.setContextMenu(contextMenu);
 }
 

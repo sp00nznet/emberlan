@@ -1,16 +1,16 @@
 @echo off
 REM ============================================
-REM F7Lans - Run Electron Client (Development)
+REM Emberlan - Run Electron Client (Development)
 REM ============================================
 REM Runs the Electron client without building
 REM Useful for testing and development
 REM ============================================
 
-title F7Lans Electron Dev
+title Emberlan Electron Dev
 
 echo.
 echo  ======================================
-echo   F7Lans Electron Client (Dev Mode)
+echo   Emberlan Electron Client (Dev Mode)
 echo  ======================================
 echo.
 

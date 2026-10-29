@@ -1,6 +1,6 @@
-# F7Lans Windows Build Scripts
+# Emberlan Windows Build Scripts
 
-This directory contains Windows batch scripts for building, running, and managing F7Lans.
+This directory contains Windows batch scripts for building, running, and managing Emberlan.
 
 ## Quick Start
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="client/public/logo.svg" alt="F7Lans Logo" width="150" height="150">
+  <img src="client/public/logo.svg" alt="Emberlan Logo" width="150" height="150">
 </p>
 
 <h1 align="center">
@@ -81,9 +81,9 @@ addresses. Full spec and reference screenshots live in
 
 ---
 
-## What is F7Lans?
+## What is Emberlan?
 
-**F7Lans** is a fully-featured, self-hosted alternative to Discord built specifically for gaming communities. Run your own server, keep your data private, and enjoy features that would cost money elsewhere — completely free.
+**Emberlan** is a fully-featured, self-hosted alternative to Discord built specifically for gaming communities. Run your own server, keep your data private, and enjoy features that would cost money elsewhere — completely free.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -109,8 +109,8 @@ addresses. Full spec and reference screenshots live in
 ### Docker (Recommended)
 
 ```bash
-git clone https://github.com/yourusername/f7lans.git
-cd f7lans
+git clone https://github.com/yourusername/emberlan.git
+cd emberlan
 
 # Linux/macOS
 ./scripts/docker-start.sh
@@ -196,14 +196,14 @@ Default login: `admin` / `admin123` (change this immediately!)
 | **System Tray** | Minimize while gaming |
 | **Push-to-Talk** | Configurable hotkeys |
 | **Voice Activation** | Hands-free communication |
-| **Multi-Server** | Connect to multiple F7Lans servers |
+| **Multi-Server** | Connect to multiple Emberlan servers |
 | **Low Resources** | Won't tank your FPS |
 
 ---
 
 ## Media Bots
 
-F7Lans includes **8 built-in bots** plus **Game Together** — all free, no subscriptions required:
+Emberlan includes **8 built-in bots** plus **Game Together** — all free, no subscriptions required:
 
 ### Streaming Bots
 
@@ -234,7 +234,7 @@ F7Lans includes **8 built-in bots** plus **Game Together** — all free, no subs
 
 ## Federation
 
-**Connect multiple F7Lans servers into one mega-community:**
+**Connect multiple Emberlan servers into one mega-community:**
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
@@ -262,9 +262,9 @@ F7Lans includes **8 built-in bots** plus **Game Together** — all free, no subs
 
 ## Comparison
 
-### F7Lans vs Discord
+### Emberlan vs Discord
 
-| Feature | F7Lans | Discord Free | Discord Nitro |
+| Feature | Emberlan | Discord Free | Discord Nitro |
 |:--------|:------:|:------------:|:-------------:|
 | **Self-Hosted** | Yes | No | No |
 | **Voice Chat** | Unlimited | Unlimited | Unlimited |
@@ -287,9 +287,9 @@ F7Lans includes **8 built-in bots** plus **Game Together** — all free, no subs
 
 <sub>* Limited by your server's disk space</sub>
 
-### Why Choose F7Lans?
+### Why Choose Emberlan?
 
-| You Want... | F7Lans Delivers |
+| You Want... | Emberlan Delivers |
 |:------------|:----------------|
 | Privacy | Your data stays on YOUR server + E2E encrypted DMs |
 | Media streaming | 6 streaming bots built-in |
@@ -354,7 +354,7 @@ F7Lans includes **8 built-in bots** plus **Game Together** — all free, no subs
 
 ## Build Scripts
 
-F7Lans includes one-click build scripts for all platforms:
+Emberlan includes one-click build scripts for all platforms:
 
 ### Server & Setup
 
@@ -404,7 +404,7 @@ Installers are output to `electron-client/dist/`
 ## Project Structure
 
 ```
-f7lans/
+emberlan/
 ├── server/                 # Node.js backend
 │   ├── services/           # Bot services
 │   ├── controllers/        # API controllers
@@ -437,8 +437,8 @@ See [Development Guide](docs/DEVELOPMENT.md) for setup instructions.
 
 ## Community
 
-- **Issues** — [Report bugs](https://github.com/yourusername/f7lans/issues)
-- **Discussions** — [Ideas & questions](https://github.com/yourusername/f7lans/discussions)
+- **Issues** — [Report bugs](https://github.com/yourusername/emberlan/issues)
+- **Discussions** — [Ideas & questions](https://github.com/yourusername/emberlan/discussions)
 
 ---
 
@@ -450,7 +450,7 @@ MIT License — Do whatever you want with it.
 
 <p align="center">
   <strong>Built with coffee and late-night gaming sessions</strong><br>
-  <sub>F7Lans — Because your community deserves better</sub>
+  <sub>Emberlan — Because your community deserves better</sub>
 </p>
 
 <p align="center">

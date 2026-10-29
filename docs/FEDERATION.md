@@ -1,6 +1,6 @@
 # Federation Guide
 
-Connect multiple F7Lans servers together to create a distributed gaming network.
+Connect multiple Emberlan servers together to create a distributed gaming network.
 
 ---
 
@@ -18,7 +18,7 @@ Connect multiple F7Lans servers together to create a distributed gaming network.
 
 ## What is Federation?
 
-Federation allows multiple independent F7Lans servers to connect and share:
+Federation allows multiple independent Emberlan servers to connect and share:
 
 - **Channels** — Messages posted in federated channels appear on all connected servers
 - **User Presence** — See when users on other servers are online
@@ -133,7 +133,7 @@ User posts message in #general (federated)
 
 ### Prerequisites
 
-- Both servers must be running F7Lans 1.0+
+- Both servers must be running Emberlan 1.0+
 - Federation must be enabled on both servers
 - Network connectivity between servers (WebSocket capable)
 - Admin access on both servers
@@ -152,7 +152,7 @@ Restart the server after changing these settings.
 
 ### Step 2: Get Your Server ID
 
-Each F7Lans server has a unique Server ID. Find yours at:
+Each Emberlan server has a unique Server ID. Find yours at:
 
 ```
 GET /api/federation/info
@@ -212,7 +212,7 @@ curl https://your-server.com/api/federation/status \
 
 ## Channel Conflict Resolution
 
-When two servers have channels with the same name, F7Lans uses intelligent conflict resolution.
+When two servers have channels with the same name, Emberlan uses intelligent conflict resolution.
 
 ### How Conflicts Are Detected
 
@@ -226,7 +226,7 @@ Server A Channels:        Server B Channels:
 
 ### Resolution Strategy
 
-F7Lans resolves conflicts based on **server size** (user count):
+Emberlan resolves conflicts based on **server size** (user count):
 
 | Scenario | Resolution |
 |----------|------------|
@@ -420,7 +420,7 @@ POST /api/federation/servers/:serverId/sync
 
 ### Getting Help
 
-- Check server logs: `docker-compose logs f7lans-server`
+- Check server logs: `docker-compose logs emberlan-server`
 - Enable debug mode: `DEBUG=federation:* npm start`
 - Open an issue on GitHub
 

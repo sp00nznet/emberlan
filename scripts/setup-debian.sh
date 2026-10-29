@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================
-# F7Lans - Complete Setup Script for Debian 12
+# Emberlan - Complete Setup Script for Debian 12
 # ============================================
-# This script sets up the entire F7Lans project
+# This script sets up the entire Emberlan project
 # including server, web client, and Electron client
 # ============================================
 
@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 
 echo ""
 echo "  ======================================"
-echo "   F7Lans Gaming Community Platform"
+echo "   Emberlan Gaming Community Platform"
 echo "   Debian 12 Setup Script"
 echo "  ======================================"
 echo ""
@@ -172,7 +172,7 @@ MONGODB_URI=mongodb://localhost:27017/f7lans
 SERVER_URL=http://localhost:3001
 CLIENT_URL=http://localhost:3000
 FEDERATION_ENABLED=true
-FEDERATION_SERVER_NAME=F7Lans Server
+FEDERATION_SERVER_NAME=Emberlan Server
 EOF
             echo "       Created default .env file"
             echo -e "       ${YELLOW}[IMPORTANT] Please edit .env with your configuration!${NC}"

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================
-# F7Lans - Start Server Script
+# Emberlan - Start Server Script
 # ============================================
 
 # Colors for output
@@ -11,7 +11,7 @@ NC='\033[0m' # No Color
 
 echo ""
 echo "  ======================================"
-echo "   F7Lans Server"
+echo "   Emberlan Server"
 echo "  ======================================"
 echo ""
 
@@ -71,7 +71,7 @@ MONGODB_URI=mongodb://localhost:27017/f7lans
 SERVER_URL=http://localhost:3001
 CLIENT_URL=http://localhost:3000
 FEDERATION_ENABLED=true
-FEDERATION_SERVER_NAME=F7Lans Server
+FEDERATION_SERVER_NAME=Emberlan Server
 EOF
     fi
     echo -e "${YELLOW}[IMPORTANT] Please edit .env with your configuration!${NC}"
@@ -84,14 +84,14 @@ if [ ! -f "server/index.js" ]; then
     echo -e "${RED}[ERROR] Server files not found!${NC}"
     echo ""
     echo "The file 'server/index.js' is missing."
-    echo "Make sure you have the complete F7Lans source code."
+    echo "Make sure you have the complete Emberlan source code."
     echo ""
     exit 1
 fi
 
 echo -e "${GREEN}[OK] All checks passed${NC}"
 echo ""
-echo "Starting F7Lans server..."
+echo "Starting Emberlan server..."
 echo "Press Ctrl+C to stop the server."
 echo ""
 echo "----------------------------------------"

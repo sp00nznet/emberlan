@@ -1,7 +1,7 @@
-// MongoDB Initialization Script for F7Lans
+// MongoDB Initialization Script for Emberlan
 // This script runs when the MongoDB container is first created
 
-db = db.getSiblingDB('f7lans');
+db = db.getSiblingDB("f7lans");
 
 // Create collections with validation
 db.createCollection('users', {
@@ -51,4 +51,4 @@ db.invites.createIndex({ code: 1 }, { unique: true });
 db.invites.createIndex({ email: 1 });
 db.invites.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-print('F7Lans database initialized successfully!');
+print('Emberlan database initialized successfully!');

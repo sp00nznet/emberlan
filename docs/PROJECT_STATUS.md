@@ -1,4 +1,4 @@
-# F7Lans Project Status
+# Emberlan Project Status
 
 ```
 ███████╗███████╗██╗      █████╗ ███╗   ██╗███████╗
@@ -16,7 +16,7 @@
 
 ## Overview
 
-F7Lans is a self-hosted gaming community platform with multiple client options and a comprehensive server backend. This document provides a complete overview of the project state, features, and client capabilities.
+Emberlan is a self-hosted gaming community platform with multiple client options and a comprehensive server backend. This document provides a complete overview of the project state, features, and client capabilities.
 
 ---
 
@@ -24,7 +24,7 @@ F7Lans is a self-hosted gaming community platform with multiple client options a
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           F7Lans Architecture                            │
+│                           Emberlan Architecture                            │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
 │   CLIENTS                          SERVER                                │
@@ -180,7 +180,7 @@ iOS/Android support via Capacitor. Framework is in place but full implementation
 | System Tray | Minimize while gaming |
 | Global Push-to-Talk | Works even when minimized |
 | Native File Picker | OS dialog for folder sharing |
-| Multi-Server | Connect to multiple F7Lans servers |
+| Multi-Server | Connect to multiple Emberlan servers |
 | Reduced Resource Usage | Optimized for gaming |
 
 ---
@@ -224,7 +224,7 @@ iOS/Android support via Capacitor. Framework is in place but full implementation
 
 ## Federation
 
-Federation is a **server-side feature** that allows multiple F7Lans servers to connect and share channels/messages.
+Federation is a **server-side feature** that allows multiple Emberlan servers to connect and share channels/messages.
 
 ### How It Works
 
@@ -292,7 +292,7 @@ Universal controller emulation for playing ANY local multiplayer game remotely.
 │                                     │ 60Hz input                 │
 │                                     ▼                            │
 │                              ┌──────────────┐                   │
-│                              │  F7Lans      │                   │
+│                              │  Emberlan      │                   │
 │                              │  Server      │                   │
 │                              └──────┬───────┘                   │
 │                                     │ WebSocket                  │
@@ -342,7 +342,7 @@ The Web Gamepad API (`navigator.getGamepads()`) is a standard browser API that w
 ```yaml
 services:
   mongodb:     # Document database
-  server:      # F7Lans backend (port 3001)
+  server:      # Emberlan backend (port 3001)
   webclient:   # Web client via Nginx (port 3000) - optional
   nginx:       # Reverse proxy with SSL (ports 80, 443) - optional
 ```
@@ -378,7 +378,7 @@ docker-compose --profile with-webclient --profile with-nginx up -d
 ## File Structure
 
 ```
-f7lans/
+emberlan/
 ├── server/                    # Node.js backend
 │   ├── index.js               # Entry point
 │   ├── config/                # Database, federation config
@@ -463,7 +463,7 @@ f7lans/
 - Game Together universal controller emulation
 - Chat fullscreen mode
 - Comprehensive bot management UI
-- New F7Lans logo and branding
+- New Emberlan logo and branding
 - End-to-end encrypted direct messages (admins cannot read)
 - Channel management (create, rename, set topics)
 - DM users visible in sidebar

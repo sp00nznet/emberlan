@@ -216,16 +216,16 @@ const createInvite = async (req, res) => {
         const inviteUrl = `${process.env.CLIENT_URL || 'http://localhost:3000'}/register?invite=${invite.code}`;
 
         await transporter.sendMail({
-          from: `"F7Lans" <${process.env.SMTP_USER}>`,
+          from: `"Emberlan" <${process.env.SMTP_USER}>`,
           to: email,
-          subject: 'You\'ve been invited to F7Lans!',
+          subject: 'You\'ve been invited to Emberlan!',
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #1a1a24; color: #fff; padding: 40px; border-radius: 10px;">
-              <h1 style="color: #ff8c00; text-align: center;">🎮 F7Lans</h1>
+              <h1 style="color: #ff8c00; text-align: center;">🎮 Emberlan</h1>
               <p style="font-size: 18px; text-align: center;">You've been invited to join our gaming community!</p>
               <div style="text-align: center; margin: 30px 0;">
                 <a href="${inviteUrl}" style="background: #ff8c00; color: #000; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
-                  Join F7Lans
+                  Join Emberlan
                 </a>
               </div>
               <p style="text-align: center; color: #888;">Or use invite code: <strong style="color: #ff8c00;">${invite.code}</strong></p>

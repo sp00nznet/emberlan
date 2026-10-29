@@ -61,7 +61,7 @@ const linkReddit = async (req, res) => {
       instructions: [
         '1. Go to reddit.com and sign in as ' + username,
         '2. Create a post or comment containing the code: ' + code,
-        '3. Click "Verify" in F7Lans to complete verification',
+        '3. Click "Verify" in Emberlan to complete verification',
         'Note: For privacy, you can delete the post after verification'
       ]
     });
@@ -131,7 +131,7 @@ const linkTwitter = async (req, res) => {
       instructions: [
         '1. Go to twitter.com/x.com and sign in as @' + cleanUsername,
         '2. Post a tweet containing the code: ' + code,
-        '3. Click "Verify" in F7Lans to complete verification',
+        '3. Click "Verify" in Emberlan to complete verification',
         'Note: You can delete the tweet after verification'
       ]
     });
@@ -197,7 +197,7 @@ const linkXbox = async (req, res) => {
       instructions: [
         '1. Go to account.xbox.com and sign in',
         '2. Edit your profile and add this code to your bio: ' + code,
-        '3. Click "Verify" in F7Lans',
+        '3. Click "Verify" in Emberlan',
         '4. You can remove the code from your bio after verification'
       ]
     });
@@ -263,7 +263,7 @@ const linkPlayStation = async (req, res) => {
       instructions: [
         '1. Go to PlayStation settings and edit your profile',
         '2. Add this code to your "About Me" section: ' + code,
-        '3. Click "Verify" in F7Lans',
+        '3. Click "Verify" in Emberlan',
         '4. You can remove the code after verification'
       ]
     });

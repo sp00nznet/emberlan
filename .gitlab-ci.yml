@@ -1,4 +1,4 @@
-# F7Lans GitLab CI/CD Pipeline
+# Emberlan GitLab CI/CD Pipeline
 # Builds Windows client and containerized server
 #
 # Optional CI/CD Variables (set in GitLab Settings > CI/CD > Variables):
@@ -12,7 +12,7 @@ stages:
   - deploy
 
 variables:
-  DOCKER_IMAGE: f7lans-server
+  DOCKER_IMAGE: emberlan-server
   DOCKER_REGISTRY: $CI_REGISTRY
   NODE_VERSION: "20"
 
@@ -45,7 +45,7 @@ build:windows-client-remote:
     - npm ci
     - npm run build:win
   artifacts:
-    name: "f7lans-windows-remote-client-${CI_COMMIT_SHORT_SHA}"
+    name: "emberlan-windows-remote-client-${CI_COMMIT_SHORT_SHA}"
     paths:
       - electron-client/dist/*.exe
     expire_in: 30 days
@@ -76,7 +76,7 @@ build:windows-client-standalone:
     - npm run copy-server
     - npm run build:win:unified
   artifacts:
-    name: "f7lans-windows-standalone-${CI_COMMIT_SHORT_SHA}"
+    name: "emberlan-windows-standalone-${CI_COMMIT_SHORT_SHA}"
     paths:
       - electron-client/dist/unified/*.exe
     expire_in: 30 days
@@ -102,24 +102,24 @@ build:docker-server:
     - buildah --version
   script:
     # Build server image (using vfs storage driver and chroot isolation - no special permissions required)
-    - buildah --storage-driver=vfs bud --isolation=chroot -t f7lans-server:${CI_COMMIT_SHORT_SHA} -f docker/Dockerfile.server .
-    - buildah --storage-driver=vfs tag f7lans-server:${CI_COMMIT_SHORT_SHA} f7lans-server:latest
+    - buildah --storage-driver=vfs bud --isolation=chroot -t emberlan-server:${CI_COMMIT_SHORT_SHA} -f docker/Dockerfile.server .
+    - buildah --storage-driver=vfs tag emberlan-server:${CI_COMMIT_SHORT_SHA} emberlan-server:latest
     # Push to registry if configured
     - |
       if [ -n "$CI_REGISTRY" ] && [ -n "$CI_REGISTRY_USER" ]; then
         buildah --storage-driver=vfs login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
-        buildah --storage-driver=vfs tag f7lans-server:${CI_COMMIT_SHORT_SHA} ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
-        buildah --storage-driver=vfs tag f7lans-server:latest ${CI_REGISTRY_IMAGE}:latest
+        buildah --storage-driver=vfs tag emberlan-server:${CI_COMMIT_SHORT_SHA} ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
+        buildah --storage-driver=vfs tag emberlan-server:latest ${CI_REGISTRY_IMAGE}:latest
         buildah --storage-driver=vfs push ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
         buildah --storage-driver=vfs push ${CI_REGISTRY_IMAGE}:latest
       fi
     # Save image as portable tarball
-    - buildah --storage-driver=vfs push f7lans-server:${CI_COMMIT_SHORT_SHA} oci-archive:f7lans-server-${CI_COMMIT_SHORT_SHA}.tar
-    - gzip f7lans-server-${CI_COMMIT_SHORT_SHA}.tar
+    - buildah --storage-driver=vfs push emberlan-server:${CI_COMMIT_SHORT_SHA} oci-archive:emberlan-server-${CI_COMMIT_SHORT_SHA}.tar
+    - gzip emberlan-server-${CI_COMMIT_SHORT_SHA}.tar
   artifacts:
-    name: "f7lans-server-docker-${CI_COMMIT_SHORT_SHA}"
+    name: "emberlan-server-docker-${CI_COMMIT_SHORT_SHA}"
     paths:
-      - f7lans-server-*.tar.gz
+      - emberlan-server-*.tar.gz
     expire_in: 30 days
   rules:
     - if: $CI_COMMIT_TAG
@@ -137,22 +137,22 @@ build:docker-webclient:
     - which buildah || (apt-get update && apt-get install -y buildah)
     - buildah --version
   script:
-    - buildah --storage-driver=vfs bud --isolation=chroot -t f7lans-webclient:${CI_COMMIT_SHORT_SHA} -f docker/Dockerfile.webclient .
-    - buildah --storage-driver=vfs tag f7lans-webclient:${CI_COMMIT_SHORT_SHA} f7lans-webclient:latest
+    - buildah --storage-driver=vfs bud --isolation=chroot -t emberlan-webclient:${CI_COMMIT_SHORT_SHA} -f docker/Dockerfile.webclient .
+    - buildah --storage-driver=vfs tag emberlan-webclient:${CI_COMMIT_SHORT_SHA} emberlan-webclient:latest
     - |
       if [ -n "$CI_REGISTRY" ] && [ -n "$CI_REGISTRY_USER" ]; then
         buildah --storage-driver=vfs login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
-        buildah --storage-driver=vfs tag f7lans-webclient:${CI_COMMIT_SHORT_SHA} ${CI_REGISTRY_IMAGE}/webclient:${CI_COMMIT_SHORT_SHA}
-        buildah --storage-driver=vfs tag f7lans-webclient:latest ${CI_REGISTRY_IMAGE}/webclient:latest
+        buildah --storage-driver=vfs tag emberlan-webclient:${CI_COMMIT_SHORT_SHA} ${CI_REGISTRY_IMAGE}/webclient:${CI_COMMIT_SHORT_SHA}
+        buildah --storage-driver=vfs tag emberlan-webclient:latest ${CI_REGISTRY_IMAGE}/webclient:latest
         buildah --storage-driver=vfs push ${CI_REGISTRY_IMAGE}/webclient:${CI_COMMIT_SHORT_SHA}
         buildah --storage-driver=vfs push ${CI_REGISTRY_IMAGE}/webclient:latest
       fi
-    - buildah --storage-driver=vfs push f7lans-webclient:${CI_COMMIT_SHORT_SHA} oci-archive:f7lans-webclient-${CI_COMMIT_SHORT_SHA}.tar
-    - gzip f7lans-webclient-${CI_COMMIT_SHORT_SHA}.tar
+    - buildah --storage-driver=vfs push emberlan-webclient:${CI_COMMIT_SHORT_SHA} oci-archive:emberlan-webclient-${CI_COMMIT_SHORT_SHA}.tar
+    - gzip emberlan-webclient-${CI_COMMIT_SHORT_SHA}.tar
   artifacts:
-    name: "f7lans-webclient-docker-${CI_COMMIT_SHORT_SHA}"
+    name: "emberlan-webclient-docker-${CI_COMMIT_SHORT_SHA}"
     paths:
-      - f7lans-webclient-*.tar.gz
+      - emberlan-webclient-*.tar.gz
     expire_in: 30 days
   rules:
     - if: $CI_COMMIT_TAG
@@ -176,7 +176,7 @@ build:linux-client-remote:
     - npm ci
     - npm run build:linux
   artifacts:
-    name: "f7lans-linux-remote-client-${CI_COMMIT_SHORT_SHA}"
+    name: "emberlan-linux-remote-client-${CI_COMMIT_SHORT_SHA}"
     paths:
       - electron-client/dist/*.AppImage
       - electron-client/dist/*.deb
@@ -201,7 +201,7 @@ build:linux-client-standalone:
     - npm run copy-server
     - npm run build:linux:unified
   artifacts:
-    name: "f7lans-linux-standalone-${CI_COMMIT_SHORT_SHA}"
+    name: "emberlan-linux-standalone-${CI_COMMIT_SHORT_SHA}"
     paths:
       - electron-client/dist/unified/*.AppImage
       - electron-client/dist/unified/*.deb
@@ -233,12 +233,12 @@ release:
     - ls -la electron-client/dist/ || true
   release:
     tag_name: $CI_COMMIT_TAG
-    name: "F7Lans $CI_COMMIT_TAG"
+    name: "Emberlan $CI_COMMIT_TAG"
     description: |
-      ## F7Lans Release $CI_COMMIT_TAG
+      ## Emberlan Release $CI_COMMIT_TAG
 
       ### Downloads
-      - **Windows Remote Client** - Connects to an external F7Lans server
+      - **Windows Remote Client** - Connects to an external Emberlan server
       - **Windows Standalone** - All-in-one with embedded server
       - **Docker Server** - Containerized server deployment
     assets:
@@ -275,7 +275,7 @@ deploy:linux:
     - mkdir -p /mnt/releases/$CI_PROJECT_NAME/$CI_COMMIT_REF_NAME
     - cp -r electron-client/dist/* /mnt/releases/$CI_PROJECT_NAME/$CI_COMMIT_REF_NAME/ || true
     - cp -r electron-client/dist/unified/* /mnt/releases/$CI_PROJECT_NAME/$CI_COMMIT_REF_NAME/ || true
-    - cp -r f7lans-server-*.tar.gz /mnt/releases/$CI_PROJECT_NAME/$CI_COMMIT_REF_NAME/ || true
+    - cp -r emberlan-server-*.tar.gz /mnt/releases/$CI_PROJECT_NAME/$CI_COMMIT_REF_NAME/ || true
     - chmod -R 755 /mnt/releases/$CI_PROJECT_NAME/$CI_COMMIT_REF_NAME/
   rules:
     - if: $CI_COMMIT_TAG

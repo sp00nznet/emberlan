@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================
-# F7Lans - Docker Stop Script
+# Emberlan - Docker Stop Script
 # ============================================
 # Stops all Docker containers
 # ============================================
@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 
 echo ""
 echo "  ======================================"
-echo "   F7Lans Docker Stop"
+echo "   Emberlan Docker Stop"
 echo "  ======================================"
 echo ""
 
@@ -31,7 +31,7 @@ else
     exit 1
 fi
 
-echo "Stopping F7Lans containers..."
+echo "Stopping Emberlan containers..."
 
 $COMPOSE_CMD down
 

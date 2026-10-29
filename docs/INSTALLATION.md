@@ -1,6 +1,6 @@
 # Installation Guide
 
-Complete guide to setting up F7Lans on your server or local machine.
+Complete guide to setting up Emberlan on your server or local machine.
 
 ---
 
@@ -43,13 +43,13 @@ Complete guide to setting up F7Lans on your server or local machine.
 
 ## Quick Install (Docker)
 
-The fastest way to get F7Lans running.
+The fastest way to get Emberlan running.
 
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/f7lans.git
-cd f7lans
+git clone https://github.com/yourusername/emberlan.git
+cd emberlan
 ```
 
 ### Step 2: Configure Environment
@@ -100,7 +100,7 @@ docker-compose logs -f
 curl http://localhost:3001/health
 ```
 
-### Step 5: Access F7Lans
+### Step 5: Access Emberlan
 
 Open your browser to `http://localhost:3001`
 
@@ -162,8 +162,8 @@ brew services start mongodb-community@6.0
 ### Step 3: Clone and Install Dependencies
 
 ```bash
-git clone https://github.com/yourusername/f7lans.git
-cd f7lans
+git clone https://github.com/yourusername/emberlan.git
+cd emberlan
 
 # Install server dependencies
 npm install
@@ -237,7 +237,7 @@ npm start
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `FEDERATION_ENABLED` | Enable server federation | `true` |
-| `FEDERATION_SERVER_NAME` | Display name for this server | `F7Lans Server` |
+| `FEDERATION_SERVER_NAME` | Display name for this server | `Emberlan Server` |
 | `FEDERATION_MAX_SERVERS` | Maximum federated servers | `10` |
 | `FEDERATION_AUTO_ACCEPT` | Auto-accept known servers | `false` |
 
@@ -323,7 +323,7 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 3. **Set up automatic restarts:**
 ```bash
-docker update --restart=always f7lans-server f7lans-mongodb
+docker update --restart=always emberlan-server emberlan-mongodb
 ```
 
 ### Using PM2 (Manual Installation)
@@ -338,7 +338,7 @@ npm install -g pm2
 // ecosystem.config.js
 module.exports = {
   apps: [{
-    name: 'f7lans',
+    name: 'emberlan',
     script: 'server/index.js',
     instances: 'max',
     exec_mode: 'cluster',
@@ -361,7 +361,7 @@ pm2 startup
 **Create backup:**
 ```bash
 # Docker
-docker exec f7lans-mongodb mongodump --db f7lans --out /backup
+docker exec emberlan-mongodb mongodump --db f7lans --out /backup
 
 # Local
 mongodump --db f7lans --out ./backups/$(date +%Y%m%d)
@@ -413,7 +413,7 @@ docker-compose up -d --build
 
 ### Getting Help
 
-- Check the [GitHub Issues](https://github.com/yourusername/f7lans/issues)
+- Check the [GitHub Issues](https://github.com/yourusername/emberlan/issues)
 - Join our community discussions
 - Read the [API Documentation](API.md)
 

@@ -1,6 +1,6 @@
 # API Reference
 
-Complete reference for F7Lans REST API and WebSocket events.
+Complete reference for Emberlan REST API and WebSocket events.
 
 ---
 
@@ -1012,7 +1012,7 @@ Response:
 ```json
 {
   "serverId": "abc123...",
-  "name": "F7Lans Server",
+  "name": "Emberlan Server",
   "url": "https://server.example.com",
   "wsUrl": "wss://server.example.com",
   "stats": {
@@ -1038,7 +1038,7 @@ Response:
 {
   "enabled": true,
   "serverId": "abc123...",
-  "serverName": "F7Lans Server",
+  "serverName": "Emberlan Server",
   "connectedServers": 2,
   "totalServers": 3,
   "servers": [...],

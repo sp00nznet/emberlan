@@ -1,13 +1,13 @@
 @echo off
 REM ============================================
-REM F7Lans - Start Development Server (with auto-reload)
+REM Emberlan - Start Development Server (with auto-reload)
 REM ============================================
 
-title F7Lans Dev Server
+title Emberlan Dev Server
 
 echo.
 echo  ======================================
-echo   F7Lans Development Server
+echo   Emberlan Development Server
 echo   (Auto-reload enabled)
 echo  ======================================
 echo.
@@ -29,7 +29,7 @@ if errorlevel 1 (
     call npm install -g nodemon
 )
 
-echo Starting F7Lans development server...
+echo Starting Emberlan development server...
 echo Server will auto-reload on file changes.
 echo Press Ctrl+C to stop the server.
 echo.

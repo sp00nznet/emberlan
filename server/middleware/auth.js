@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'f7lans-super-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'emberlan-super-secret-key-change-in-production';
 
 // Generate JWT token
 const generateToken = (userId) => {
