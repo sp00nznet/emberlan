@@ -95,5 +95,5 @@ First version, published as f7lans. Summarized from the git history; no changelo
 ### Removed
 - Emulator-specific bots, file sharing and the Star Citizen bot.
 
-[Unreleased]: https://github.com/sp00nznet/f7lans/compare/4397046...HEAD
-[1.0.0]: https://github.com/sp00nznet/f7lans/commit/4397046
+[Unreleased]: https://github.com/sp00nznet/emberlan/compare/4397046...HEAD
+[1.0.0]: https://github.com/sp00nznet/emberlan/commit/4397046

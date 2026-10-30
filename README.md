@@ -70,7 +70,7 @@ Prerequisites: Node.js 18 or newer (20 LTS recommended), npm, and MongoDB 6 or 7
 
 1. Get the code:
    ```bash
-   git clone https://github.com/sp00nznet/f7lans.git emberlan
+   git clone https://github.com/sp00nznet/emberlan.git emberlan
    cd emberlan
    ```
 2. Install server dependencies:

@@ -13,7 +13,7 @@ Current state is in the [README](README.md#status). This file is intent, not fac
 3. **Tighten the CSP:** move the UI's ~190 inline `onclick` handlers to `addEventListener`, then
    drop `script-src-attr 'unsafe-inline'` from `server/index.js`.
 4. **Tag v1.1.0** so the release workflow publishes the first Windows installer and APK.
-5. **Rename the GitHub repository** from `sp00nznet/f7lans` to Emberlan and update the links.
+5. **Rename the GitHub repository** from `sp00nznet/emberlan` to Emberlan and update the links.
 6. A working change-password form in Settings > Account. The server endpoint
    `PUT /api/auth/password` exists; the button only shows a toast.
 
