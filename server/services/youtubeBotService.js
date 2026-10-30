@@ -1,150 +1,90 @@
-// YouTube Bot Service for Emberlan
-// Allows admins to play YouTube audio in voice channels
+/**
+ * YouTube bot: everyone in a voice channel watches the same YouTube video (the official embed
+ * player in each client). The server only checks the link and looks up title/thumbnail through
+ * YouTube's oEmbed endpoint; if that lookup fails the video still plays.
+ */
+const BotSettings = require('../models/BotSettings');
 
-const ytdl = require('@distube/ytdl-core');
+// The harness points this at a fake; real servers use YouTube's.
+const OEMBED = process.env.YOUTUBE_OEMBED_URL || 'https://www.youtube.com/oembed';
+
+/** The 11-character video id in any common YouTube link, or null. */
+function videoIdOf(input) {
+  const s = String(input || '').trim();
+  if (/^[\w-]{11}$/.test(s)) return s;
+  let u;
+  try { u = new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`); } catch { return null; }
+  const host = u.hostname.replace(/^(www|m|music)\./, '');
+  let id = null;
+  if (host === 'youtu.be') id = u.pathname.slice(1);
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    id = u.searchParams.get('v') || (/^\/(embed|shorts|live|v)\/([\w-]{11})/.exec(u.pathname) || [])[2];
+  }
+  return id && /^[\w-]{11}$/.test(id.slice(0, 11)) ? id.slice(0, 11) : null;
+}
 
 class YouTubeBotService {
   constructor(io) {
     this.io = io;
-    this.activeStreams = {}; // channelId -> { url, title, playing, startTime }
     this.enabled = false;
+    this.activeStreams = {}; // channelId -> session
+    this.ready = BotSettings.findOne({ botType: 'youtube' })
+      .then((s) => { if (s) this.enabled = !!s.enabled; })
+      .catch((e) => console.error('[YouTube] loading settings failed:', e.message));
   }
 
-  // Enable/disable the bot
-  setEnabled(enabled) {
-    this.enabled = enabled;
-    if (!enabled) {
-      // Stop all active streams
-      this.stopAll();
-    }
-    return this.enabled;
+  async setEnabled(enabled) {
+    this.enabled = !!enabled;
+    if (!this.enabled) this.stopAll();
+    await BotSettings.findOneAndUpdate({ botType: 'youtube' }, { botType: 'youtube', enabled: this.enabled, updatedAt: new Date() }, { upsert: true }).exec();
+    return { enabled: this.enabled };
   }
 
-  isEnabled() {
-    return this.enabled;
-  }
-
-  // Get video info from URL
   async getVideoInfo(url) {
+    const videoId = videoIdOf(url);
+    if (!videoId) throw new Error("That doesn't look like a YouTube link");
+    const info = { videoId, url: `https://www.youtube.com/watch?v=${videoId}`, title: 'YouTube video', author: null,
+      thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` };
     try {
-      const info = await ytdl.getInfo(url);
-      return {
-        title: info.videoDetails.title,
-        author: info.videoDetails.author.name,
-        duration: parseInt(info.videoDetails.lengthSeconds),
-        thumbnail: info.videoDetails.thumbnails[0]?.url,
-        url: url
-      };
-    } catch (error) {
-      console.error('Failed to get video info:', error.message);
-      throw new Error('Could not get video info. Make sure the URL is valid.');
-    }
+      const fetch = (await import('node-fetch')).default;
+      const r = await fetch(`${OEMBED}?format=json&url=${encodeURIComponent(info.url)}`, { timeout: 4000 });
+      if (r.ok) {
+        const j = await r.json();
+        Object.assign(info, { title: j.title || info.title, author: j.author_name || null, thumbnail: j.thumbnail_url || info.thumbnail });
+      }
+    } catch { /* offline or blocked: play with the defaults */ }
+    return info;
   }
 
-  // Play a YouTube video in a channel
   async play(channelId, url, requestedBy) {
-    if (!this.enabled) {
-      throw new Error('YouTube bot is not enabled');
-    }
-
-    try {
-      const info = await this.getVideoInfo(url);
-
-      // Stop any existing stream in this channel
-      if (this.activeStreams[channelId]) {
-        this.stop(channelId);
-      }
-
-      this.activeStreams[channelId] = {
-        url,
-        title: info.title,
-        author: info.author,
-        duration: info.duration,
-        thumbnail: info.thumbnail,
-        playing: true,
-        startTime: Date.now(),
-        requestedBy
-      };
-
-      // Notify all users in the channel
-      this.io.to(`voice:${channelId}`).emit('youtube:playing', {
-        channelId,
-        ...this.activeStreams[channelId]
-      });
-
-      return this.activeStreams[channelId];
-    } catch (error) {
-      throw error;
-    }
+    if (!this.enabled) throw new Error('YouTube bot is turned off');
+    if (!channelId) throw new Error('channelId is required');
+    const info = await this.getVideoInfo(url);
+    const session = { channelId, ...info, requestedBy, startTime: Date.now() };
+    this.activeStreams[channelId] = session;
+    this.io.to(`voice:${channelId}`).emit('youtube:playing', session);
+    return session;
   }
 
-  // Stop playback in a channel
   stop(channelId) {
-    if (this.activeStreams[channelId]) {
-      delete this.activeStreams[channelId];
-
-      this.io.to(`voice:${channelId}`).emit('youtube:stopped', { channelId });
-      return true;
-    }
-    return false;
+    if (!this.activeStreams[channelId]) return { stopped: false };
+    delete this.activeStreams[channelId];
+    this.io.to(`voice:${channelId}`).emit('youtube:stopped', { channelId });
+    return { stopped: true };
   }
 
-  // Stop all playback
   stopAll() {
-    for (const channelId in this.activeStreams) {
-      this.stop(channelId);
-    }
+    for (const id of Object.keys(this.activeStreams)) this.stop(id);
   }
 
-  // Get stream URL for a video (audio only)
-  async getStreamUrl(url) {
-    try {
-      const info = await ytdl.getInfo(url);
-      const format = ytdl.chooseFormat(info.formats, {
-        quality: 'highestaudio',
-        filter: 'audioonly'
-      });
-
-      if (!format) {
-        throw new Error('No audio format available');
-      }
-
-      return format.url;
-    } catch (error) {
-      console.error('Failed to get stream URL:', error.message);
-      throw new Error('Could not get audio stream');
-    }
+  sessionFor(channelId) {
+    const s = this.activeStreams[channelId];
+    return s && { event: 'youtube:playing', data: s };
   }
 
-  // Get current playback status for a channel
-  getStatus(channelId) {
-    return this.activeStreams[channelId] || null;
-  }
-
-  // Get all active streams
-  getAllStreams() {
-    return this.activeStreams;
-  }
-
-  // Pause playback (just marks as paused, client handles actual pause)
-  pause(channelId) {
-    if (this.activeStreams[channelId]) {
-      this.activeStreams[channelId].playing = false;
-      this.io.to(`voice:${channelId}`).emit('youtube:paused', { channelId });
-      return true;
-    }
-    return false;
-  }
-
-  // Resume playback
-  resume(channelId) {
-    if (this.activeStreams[channelId]) {
-      this.activeStreams[channelId].playing = true;
-      this.io.to(`voice:${channelId}`).emit('youtube:resumed', { channelId });
-      return true;
-    }
-    return false;
+  getStatus() {
+    return { enabled: this.enabled, activeStreams: Object.values(this.activeStreams) };
   }
 }
 
-module.exports = { YouTubeBotService };
+module.exports = { YouTubeBotService, videoIdOf };

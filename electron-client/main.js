@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, globalShortcut, nativeImage, Notification, desktopCapturer } = require('electron');
+const { app, session, BrowserWindow, Tray, Menu, ipcMain, globalShortcut, nativeImage, Notification, desktopCapturer } = require('electron');
 const path = require('path');
 const Store = require('electron-store');
 const { spawn } = require('child_process');
@@ -404,6 +404,11 @@ function stopEmbeddedServer() {
 
 // App ready
 app.whenReady().then(async () => {
+  // The UI loads from file://, so YouTube embeds get no Referer and refuse to play ("error 153").
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['https://www.youtube.com/embed/*', 'https://www.youtube-nocookie.com/embed/*'] },
+    (details, cb) => cb({ requestHeaders: { ...details.requestHeaders, Referer: 'https://emberlan.app/' } }),
+  );
   // Start embedded server if enabled
   if (EMBEDDED_SERVER) {
     try {

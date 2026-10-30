@@ -10,8 +10,16 @@ const register = (name, service) => {
   console.log(`[BotRegistry] Registered bot: ${name}`);
 };
 
+const get = (name) => registeredBots[name] || null;
+
+// What someone joining a voice channel should see: bots that implement sessionFor(channelId)
+// answer for themselves; the older ones are read field by field below.
 const getActiveSessionsForChannel = (channelId) => {
   const activeSessions = [];
+  for (const [type, bot] of Object.entries(registeredBots)) {
+    const s = bot.sessionFor?.(String(channelId));
+    if (s) activeSessions.push({ type, ...s });
+  }
 
   // Check Chrome bot
   if (registeredBots.chrome?.activeSessions?.[channelId]) {
@@ -23,84 +31,6 @@ const getActiveSessionsForChannel = (channelId) => {
         channelId,
         url: session.url,
         controller: session.controller
-      }
-    });
-  }
-
-  // Check YouTube bot
-  if (registeredBots.youtube?.activeStreams?.[channelId]) {
-    const session = registeredBots.youtube.activeStreams[channelId];
-    activeSessions.push({
-      type: 'youtube',
-      event: 'youtube:playing',
-      data: {
-        channelId,
-        url: session.url,
-        title: session.title,
-        thumbnail: session.thumbnail
-      }
-    });
-  }
-
-  // Check IPTV bot
-  if (registeredBots.iptv?.activeStreams?.[channelId]) {
-    const session = registeredBots.iptv.activeStreams[channelId];
-    activeSessions.push({
-      type: 'iptv',
-      event: 'iptv:playing',
-      data: {
-        channelId,
-        channelName: session.iptvChannel?.name,
-        streamUrl: session.iptvChannel?.url,
-        currentProgram: session.currentProgram
-      }
-    });
-  }
-
-  // Check Plex bot
-  if (registeredBots.plex?.activeStreams?.[channelId]) {
-    const session = registeredBots.plex.activeStreams[channelId];
-    activeSessions.push({
-      type: 'plex',
-      event: 'media:playing',
-      data: {
-        source: 'Plex',
-        channelId,
-        title: session.title,
-        streamUrl: session.streamUrl,
-        thumbnail: null
-      }
-    });
-  }
-
-  // Check Emby bot
-  if (registeredBots.emby?.activeStreams?.[channelId]) {
-    const session = registeredBots.emby.activeStreams[channelId];
-    activeSessions.push({
-      type: 'emby',
-      event: 'media:playing',
-      data: {
-        source: 'Emby',
-        channelId,
-        title: session.title,
-        streamUrl: session.streamUrl,
-        thumbnail: null
-      }
-    });
-  }
-
-  // Check Jellyfin bot
-  if (registeredBots.jellyfin?.activeStreams?.[channelId]) {
-    const session = registeredBots.jellyfin.activeStreams[channelId];
-    activeSessions.push({
-      type: 'jellyfin',
-      event: 'media:playing',
-      data: {
-        source: 'Jellyfin',
-        channelId,
-        title: session.title,
-        streamUrl: session.streamUrl,
-        thumbnail: null
       }
     });
   }
@@ -124,5 +54,6 @@ const getActiveSessionsForChannel = (channelId) => {
 
 module.exports = {
   register,
+  get,
   getActiveSessionsForChannel
 };

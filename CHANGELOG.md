@@ -7,6 +7,13 @@ All notable changes to Emberlan are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Media bots in the conformance harness (`conformance/bots.js`).
+  - **Fake media server:** it speaks the Plex, Jellyfin, Emby, IPTV-provider and YouTube oEmbed
+    APIs and serves real test media generated with ffmpeg (`conformance/media/`).
+  - **Server checks:** setup, permissions, that no key reaches clients, the stream proxy, format
+    detection, late joiners, and settings surviving a restart.
+  - **UI checks:** a non-admin uses each dialog, and the media decodes in both users' browsers.
+  - 240 checks in all.
 - Game Together works end to end. Guests' controllers or phone touch pads drive virtual Xbox
   controllers (ViGEmBus) on the host's PC, created by the desktop app (`electron-client/gamepads.js`).
   - Input goes peer to peer over a WebRTC data channel, never through the server.
@@ -40,6 +47,17 @@ All notable changes to Emberlan are recorded here. The format follows
 - LICENSE, ROADMAP.md, SECURITY.md, CONTRIBUTING.md and this changelog.
 
 ### Changed
+- **Bots rewritten.** Plex, Jellyfin and Emby are one service with three adapters
+  (`server/services/mediaServerBot.js`). IPTV and YouTube are rewritten too, and every bot has a
+  small client dialog (`mediabots.js`, `iptv.js`, `youtube.js`) instead of an admin panel.
+- **Who can use bots:** admins set them up. Anyone can search and browse. Play and stop need you in
+  that voice channel.
+- **Stream proxy:** it only accepts links the server issued (an encrypted upstream URL), and passes
+  byte ranges through so seeking works.
+- **YouTube:** no longer uses `ytdl-core`. It reads title and thumbnail from oEmbed and plays even
+  if that fails.
+- **Removed:** IPTV "recordings" (they never recorded), the unused image search, Star Citizen, RPG,
+  activity stats, emulator and activity-tracking services, and their routes and models.
 - Game Together's server side only hands out seats. The virtual-controller backends that never
   drove a device (ViGEm stub, in-memory uinput, foohid, mock) are gone, along with the
   `gameTogether:input` socket event and `POST /api/admin/game-together/input`.
@@ -61,6 +79,30 @@ All notable changes to Emberlan are recorded here. The format follows
   `GAME_TOGETHER.md` moved to `docs/game-together.md`.
 
 ### Fixed
+- **The stream proxy was open to anyone:** without logging in, anyone could make the server fetch
+  any URL, including machines on its LAN.
+- **Keys leaked to every client:** Plex tokens, Jellyfin/Emby API keys and IPTV account details
+  reached all clients inside stream URLs, channel lists and status.
+- **Jellyfin and Emby played audio only:** they requested an audio-only MP3 stream for every item,
+  so movies never showed video. Video now plays as HLS.
+- **Emby fetched items** from an endpoint Emby doesn't have. Jellyfin accepted a wrong API key as
+  "connected".
+- **Bots were unusable for non-admins:** every bot dialog called admin-only routes, so regular
+  users saw "forbidden".
+- **IPTV guessed formats wrong:** it rewrote every stream URL to `.m3u8`, which broke HLS without
+  that extension, raw MPEG-TS, and URLs with tokens. The server now probes the stream.
+- **The IPTV playlist parser** dropped attributes that weren't in one fixed order. The guide
+  ignored timezones.
+- **Plex thumbnails always failed** (a relative URL passed to node-fetch).
+- **Settings:** disconnecting a media server wasn't saved, so a restart reconnected it. YouTube
+  forgot it was turned on after every restart.
+- **Late joiners** got Plex/Jellyfin/Emby sessions without a thumbnail or format.
+- **Anyone could stop anyone's stream:** any user could stop any IPTV stream, or all of them at
+  once.
+- **Ghost voice members:** after a restart, the database still listed voice members from before,
+  and new callers tried to call those ghosts. Voice membership is now cleared at startup.
+- **hls.js and mpegts.js workers** were blocked by the web client's security policy. Playback fell
+  back to the main thread and logged errors.
 - Touch pad: the X button was never shown, because it shared the CSS class `tp-x` with the
   edit-mode hide control. The harness now checks every control is visible.
 - Toasts no longer cover the touch pad during a game; one sat on the A button and swallowed presses.

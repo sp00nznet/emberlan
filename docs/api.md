@@ -913,11 +913,33 @@ Request:
 
 ### Media Bot Endpoints
 
+Who may call what, for YouTube, Plex, Jellyfin, Emby and IPTV:
+- **Admins only:** `enable`, `connect`, `disconnect` and `configure`.
+- **Any logged-in user:** `status`, `search`, `channels`, `groups`, `epg`.
+- **Play and stop:** you must be in the voice channel, or be an admin.
+
+Errors are `400 { error }` with a readable message; `403` when you're not allowed. Full behavior
+is in [bots.md](bots.md).
+
+- **Plex/Jellyfin/Emby `connect`:** body `{ serverUrl, token }` for Plex, `{ serverUrl, apiKey }`
+  for Jellyfin and Emby.
+- **Plex/Jellyfin/Emby `play`:** body `{ channelId, itemId }`, where `itemId` is a search result's
+  `id`.
+- **IPTV `configure`:** multipart with a `playlist` file and/or `playlistUrl`, plus an optional
+  `epgUrl`.
+- **IPTV `play` and `stop`:** body `{ voiceChannelId, iptvChannelId }`.
+- **YouTube `play`:** body `{ channelId, url }`.
+
+`GET /api/stream/proxy?u=<sealed>` serves the stream and thumbnail links the bots hand out (no
+login; it only accepts links the server issued).
+
+
 #### YouTube Bot
 
 ```http
 GET /api/admin/youtube-bot/status
 POST /api/admin/youtube-bot/enable
+GET /api/admin/youtube-bot/video-info?url=...
 POST /api/admin/youtube-bot/play
 POST /api/admin/youtube-bot/stop
 Authorization: Bearer <token>
@@ -991,10 +1013,6 @@ GET /api/admin/iptv-bot/epg/:channelId
 POST /api/admin/iptv-bot/play
 POST /api/admin/iptv-bot/change-channel
 POST /api/admin/iptv-bot/stop
-POST /api/admin/iptv-bot/recordings
-GET /api/admin/iptv-bot/recordings
-DELETE /api/admin/iptv-bot/recordings/:recordingId
-POST /api/admin/iptv-bot/recordings/:recordingId/tag
 Authorization: Bearer <token>
 ```
 

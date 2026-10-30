@@ -1,498 +1,228 @@
 /**
- * IPTV Bot Service
- * IPTV client with EPG support, recording, and user tagging
+ * IPTV bot: watch live TV channels from an M3U playlist together in a voice channel.
+ *
+ * - The playlist comes from an upload or a URL; the optional XMLTV guide (EPG) from a URL.
+ * - Channel URLs often carry the provider account (user/password), so they never leave the
+ *   server: clients get proxy links (streamProxy.js) and channel lists without URLs.
+ * - On play the server probes the stream and tells clients how to play it: 'hls' (a playlist,
+ *   whatever its URL looks like) or 'ts' (raw MPEG-TS).
  */
-
-const fs = require('fs').promises;
-const path = require('path');
 const BotSettings = require('../models/BotSettings');
+const { proxyUrl } = require('./streamProxy');
+
+const fetchOk = async (url, opts = {}) => {
+  const fetch = (await import('node-fetch')).default;
+  const r = await fetch(url, { headers: { 'User-Agent': 'Emberlan/1.0' }, timeout: 15000, ...opts });
+  if (!r.ok) throw new Error(`${url.split('?')[0]} returned ${r.status}`);
+  return r;
+};
+
+// #EXTINF:-1 tvg-id="x" tvg-logo="y" group-title="z",Name  (attributes in any order)
+function parseM3U(text) {
+  const channels = [];
+  let info = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith('#EXTINF')) {
+      const attrs = Object.fromEntries([...line.matchAll(/([\w-]+)="([^"]*)"/g)].map((m) => [m[1].toLowerCase(), m[2]]));
+      const comma = line.indexOf(',', line.lastIndexOf('"') + 1);
+      info = { attrs, name: (comma > -1 ? line.slice(comma + 1) : '').trim() };
+    } else if (line && !line.startsWith('#') && info) {
+      const n = channels.length + 1;
+      channels.push({
+        id: `${info.attrs['tvg-id'] || 'ch'}#${n}`, // unique even when providers repeat tvg-ids
+        tvgId: info.attrs['tvg-id'] || null,
+        name: info.name || info.attrs['tvg-name'] || `Channel ${n}`,
+        logo: info.attrs['tvg-logo'] || null,
+        group: info.attrs['group-title'] || 'Uncategorized',
+        url: line,
+      });
+      info = null;
+    }
+  }
+  return channels;
+}
+
+// XMLTV time: "20261030193000 +0100" (offset optional, UTC when missing).
+function xmltvTime(s) {
+  const m = /^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)?\s*([+-]\d{4})?/.exec(s || '');
+  if (!m) return null;
+  const utc = Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+  const off = m[7] ? (m[7][0] === '-' ? -1 : 1) * (+m[7].slice(1, 3) * 60 + +m[7].slice(3)) : 0;
+  return new Date(utc - off * 60000);
+}
+
+const unescapeXml = (s) => s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').trim();
+
+// ponytail: regex XMLTV parser; fine for guides of a few MB. Use a SAX parser if large guides choke it.
+function parseXMLTV(xml) {
+  const epg = {}; // tvg-id -> [{ title, desc, start, stop }]
+  for (const m of xml.matchAll(/<programme\b([^>]*)>([\s\S]*?)<\/programme>/g)) {
+    const attrs = Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map((a) => [a[1], a[2]]));
+    const title = /<title[^>]*>([\s\S]*?)<\/title>/.exec(m[2]);
+    const start = xmltvTime(attrs.start), stop = xmltvTime(attrs.stop);
+    if (!attrs.channel || !title || !start || !stop) continue;
+    const desc = /<desc[^>]*>([\s\S]*?)<\/desc>/.exec(m[2]);
+    (epg[attrs.channel] ||= []).push({ title: unescapeXml(title[1]), desc: desc ? unescapeXml(desc[1]) : '', start, stop });
+  }
+  for (const list of Object.values(epg)) list.sort((a, b) => a.start - b.start);
+  return epg;
+}
+
+// Read the first bytes of a stream: an HLS playlist starts with #EXTM3U, MPEG-TS with 0x47.
+async function probe(url) {
+  const r = await fetchOk(url, { timeout: 10000 });
+  const type = r.headers.get('content-type') || '';
+  let head = Buffer.alloc(0);
+  for await (const chunk of r.body) {
+    head = Buffer.concat([head, chunk]);
+    if (head.length >= 512) break;
+  }
+  r.body.destroy?.();
+  if (head.toString('utf8', 0, 7) === '#EXTM3U' || /mpegurl/i.test(type)) return 'hls';
+  if (head[0] === 0x47 || /mp2t/i.test(type)) return 'ts';
+  if (/^(video|audio)\//i.test(type)) return 'file';
+  throw new Error(`Unrecognized stream (${type || 'no content type'})`);
+}
 
 class IPTVBotService {
   constructor(io) {
     this.io = io;
     this.enabled = false;
-    this.configured = false;
-    this.playlistUrl = null;
-    this.epgUrl = null;
     this.channels = [];
-    this.epgData = {};
-    this.activeStreams = {}; // channelId -> { iptvChannel, title }
-    this.recordings = []; // { id, channelName, programTitle, startTime, endTime, requestedBy, taggedUsers }
-    this.scheduledRecordings = []; // Future recordings
-
-    // Load saved settings on startup
-    this.loadSavedSettings();
+    this.playlistUrl = null; // null when uploaded
+    this.epgUrl = null;
+    this.epg = {};
+    this.activeStreams = {}; // voice channelId -> session
+    this.ready = this.load();
   }
 
-  // Load settings from MongoDB
-  async loadSavedSettings() {
-    try {
-      const settings = await BotSettings.findOne({ botType: 'iptv' });
-      if (settings) {
-        this.enabled = settings.enabled;
-        if (settings.config) {
-          const { playlistUrl, epgUrl, channels } = settings.config;
-          if (channels && channels.length > 0) {
-            this.channels = channels;
-            this.playlistUrl = playlistUrl;
-            this.epgUrl = epgUrl;
-            this.configured = true;
-            console.log(`[IPTV] Loaded saved settings: ${channels.length} channels`);
+  get configured() { return this.channels.length > 0; }
 
-            // Reload EPG data if URL is available
-            if (epgUrl) {
-              this.loadEPG(epgUrl).catch(err => {
-                console.error('[IPTV] Failed to reload EPG:', err.message);
-              });
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error('[IPTV] Failed to load saved settings:', err.message);
+  async load() {
+    try {
+      const s = await BotSettings.findOne({ botType: 'iptv' });
+      if (!s) return;
+      this.enabled = !!s.enabled;
+      this.channels = s.config?.channels || [];
+      this.playlistUrl = s.config?.playlistUrl || null;
+      this.epgUrl = s.config?.epgUrl || null;
+      if (this.epgUrl) await this.loadEPG().catch((e) => console.error('[IPTV] guide reload failed:', e.message));
+    } catch (e) {
+      console.error('[IPTV] loading settings failed:', e.message);
     }
   }
 
-  // Save settings to MongoDB
-  async saveSettings() {
-    try {
-      await BotSettings.findOneAndUpdate(
-        { botType: 'iptv' },
-        {
-          botType: 'iptv',
-          enabled: this.enabled,
-          config: {
-            playlistUrl: this.playlistUrl,
-            epgUrl: this.epgUrl,
-            channels: this.channels
-          }
-        },
-        { upsert: true, new: true }
-      );
-      console.log('[IPTV] Settings saved to database');
-    } catch (err) {
-      console.error('[IPTV] Failed to save settings:', err.message);
-    }
+  save() {
+    return BotSettings.findOneAndUpdate(
+      { botType: 'iptv' },
+      { botType: 'iptv', enabled: this.enabled, config: { channels: this.channels, playlistUrl: this.playlistUrl, epgUrl: this.epgUrl }, updatedAt: new Date() },
+      { upsert: true },
+    ).exec();
   }
 
   async setEnabled(enabled) {
-    this.enabled = enabled;
-    if (!enabled) {
-      this.stopAll();
-    }
-    await this.saveSettings();
+    this.enabled = !!enabled;
+    if (!this.enabled) this.stopAll();
+    await this.save();
     return { enabled: this.enabled };
   }
 
-  // Configure IPTV with M3U playlist and EPG (from URL)
-  async configure(playlistUrl, epgUrl) {
-    try {
-      await this.loadPlaylist(playlistUrl);
-
-      if (epgUrl) {
-        await this.loadEPG(epgUrl);
-      }
-
-      this.playlistUrl = playlistUrl;
-      this.epgUrl = epgUrl;
-      this.configured = true;
-
-      // Save settings to database
-      await this.saveSettings();
-
-      return {
-        configured: true,
-        channelCount: this.channels.length,
-        hasEPG: !!epgUrl
-      };
-    } catch (error) {
-      throw new Error('Failed to configure IPTV: ' + error.message);
-    }
+  /** playlistText (an upload) or playlistUrl; epgUrl optional ('' clears it). */
+  async configure({ playlistText, playlistUrl, epgUrl }) {
+    if (!playlistText && !playlistUrl) throw new Error('Upload a playlist or give its URL');
+    const text = playlistText ?? await (await fetchOk(playlistUrl)).text();
+    const channels = parseM3U(text);
+    if (!channels.length) throw new Error('No channels found in that playlist');
+    this.channels = channels;
+    this.playlistUrl = playlistText ? null : playlistUrl;
+    this.epgUrl = epgUrl || null;
+    this.epg = {};
+    let epgError = null;
+    if (this.epgUrl) await this.loadEPG().catch((e) => { epgError = e.message; });
+    await this.save();
+    return { configured: true, channelCount: channels.length, groupCount: this.getGroups().length, hasEPG: !!Object.keys(this.epg).length, epgError };
   }
 
-  // Configure IPTV from uploaded file
-  async configureFromFile(filePath, epgUrl) {
-    try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      this.channels = this.parseM3U(content);
-
-      if (epgUrl) {
-        await this.loadEPG(epgUrl);
-      }
-
-      this.playlistUrl = filePath; // Store file path instead of URL
-      this.epgUrl = epgUrl;
-      this.configured = true;
-
-      // Save settings to database
-      await this.saveSettings();
-
-      return {
-        configured: true,
-        channelCount: this.channels.length,
-        hasEPG: !!epgUrl
-      };
-    } catch (error) {
-      throw new Error('Failed to configure IPTV from file: ' + error.message);
-    }
+  async loadEPG() {
+    this.epg = parseXMLTV(await (await fetchOk(this.epgUrl)).text());
   }
 
-  // Load M3U playlist from URL
-  async loadPlaylist(url) {
-    const fetch = (await import('node-fetch')).default;
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error('Failed to fetch playlist');
-    }
-
-    const content = await response.text();
-    this.channels = this.parseM3U(content);
-
-    return this.channels.length;
+  // What clients see of a channel: no stream URL, logo through the proxy.
+  view(ch) {
+    return { id: ch.id, name: ch.name, group: ch.group, logo: proxyUrl(ch.logo), now: this.nowPlaying(ch)?.title || null };
   }
 
-  // Parse M3U playlist
-  parseM3U(content) {
-    const lines = content.split('\n');
-    const channels = [];
-    let currentChannel = null;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      if (trimmed.startsWith('#EXTINF:')) {
-        // Parse channel info
-        const match = trimmed.match(/#EXTINF:(-?\d+)\s*(?:.*?tvg-id="([^"]*)")?(?:.*?tvg-name="([^"]*)")?(?:.*?tvg-logo="([^"]*)")?(?:.*?group-title="([^"]*)")?,(.*)$/);
-
-        if (match) {
-          currentChannel = {
-            id: match[2] || `ch_${channels.length}`,
-            name: match[6]?.trim() || match[3] || `Channel ${channels.length + 1}`,
-            logo: match[4] || null,
-            group: match[5] || 'Uncategorized',
-            tvgId: match[2] || null
-          };
-        } else {
-          // Simple format
-          const nameMatch = trimmed.match(/#EXTINF:(-?\d+),(.*)$/);
-          if (nameMatch) {
-            currentChannel = {
-              id: `ch_${channels.length}`,
-              name: nameMatch[2].trim(),
-              logo: null,
-              group: 'Uncategorized',
-              tvgId: null
-            };
-          }
-        }
-      } else if (trimmed && !trimmed.startsWith('#') && currentChannel) {
-        currentChannel.url = trimmed;
-        channels.push(currentChannel);
-        currentChannel = null;
-      }
-    }
-
-    return channels;
+  getChannels(group) {
+    return this.channels.filter((c) => !group || c.group === group).map((c) => this.view(c));
   }
 
-  // Load EPG data
-  async loadEPG(url) {
-    const fetch = (await import('node-fetch')).default;
-
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        console.error('Failed to fetch EPG');
-        return;
-      }
-
-      const content = await response.text();
-      this.epgData = this.parseXMLTV(content);
-    } catch (error) {
-      console.error('Failed to load EPG:', error);
-    }
-  }
-
-  // Parse XMLTV EPG format (simplified)
-  parseXMLTV(content) {
-    const epg = {};
-
-    // Parse channels
-    const channelMatches = content.matchAll(/<channel id="([^"]+)"[^>]*>[\s\S]*?<display-name[^>]*>([^<]+)<\/display-name>[\s\S]*?<\/channel>/g);
-    for (const match of channelMatches) {
-      epg[match[1]] = {
-        name: match[2],
-        programs: []
-      };
-    }
-
-    // Parse programs
-    const programMatches = content.matchAll(/<programme start="([^"]+)" stop="([^"]+)" channel="([^"]+)"[^>]*>[\s\S]*?<title[^>]*>([^<]+)<\/title>[\s\S]*?(?:<desc[^>]*>([^<]*)<\/desc>)?[\s\S]*?<\/programme>/g);
-
-    for (const match of programMatches) {
-      const channelId = match[3];
-      if (epg[channelId]) {
-        epg[channelId].programs.push({
-          start: this.parseEPGDate(match[1]),
-          stop: this.parseEPGDate(match[2]),
-          title: match[4],
-          description: match[5] || ''
-        });
-      }
-    }
-
-    return epg;
-  }
-
-  // Parse EPG date format (YYYYMMDDHHmmss +ZZZZ)
-  parseEPGDate(dateStr) {
-    const match = dateStr.match(/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
-    if (match) {
-      return new Date(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}`);
-    }
-    return new Date(dateStr);
-  }
-
-  // Get channel list
-  getChannels(group = null) {
-    if (group) {
-      return this.channels.filter(ch => ch.group === group);
-    }
-    return this.channels;
-  }
-
-  // Get channel groups
   getGroups() {
-    const groups = new Set(this.channels.map(ch => ch.group));
-    return Array.from(groups);
+    const counts = {};
+    for (const c of this.channels) counts[c.group] = (counts[c.group] || 0) + 1;
+    return Object.entries(counts).map(([name, count]) => ({ name, count }));
   }
 
-  // Get EPG for a channel
-  getChannelEPG(channelId, date = new Date()) {
-    const channel = this.channels.find(ch => ch.id === channelId || ch.tvgId === channelId);
-    if (!channel) {
-      return null;
-    }
-
-    const epgChannel = this.epgData[channel.tvgId] || this.epgData[channel.id];
-    if (!epgChannel) {
-      return { channel: channel.name, programs: [] };
-    }
-
-    // Filter programs for the specified date
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(date);
-    dayEnd.setHours(23, 59, 59, 999);
-
-    const programs = epgChannel.programs.filter(p =>
-      p.start >= dayStart && p.start <= dayEnd
-    );
-
-    return {
-      channel: channel.name,
-      programs: programs.map(p => ({
-        title: p.title,
-        description: p.description,
-        start: p.start,
-        stop: p.stop,
-        isLive: new Date() >= p.start && new Date() <= p.stop
-      }))
-    };
+  nowPlaying(ch, at = new Date()) {
+    return (this.epg[ch.tvgId] || []).find((p) => p.start <= at && at < p.stop) || null;
   }
 
-  // Get current program for a channel
-  getCurrentProgram(channelId) {
-    const epg = this.getChannelEPG(channelId);
-    if (!epg) return null;
-
+  getChannelEPG(channelId) {
+    const ch = this.channels.find((c) => c.id === channelId);
+    if (!ch) throw new Error('IPTV channel not found');
     const now = new Date();
-    return epg.programs.find(p => now >= p.start && now <= p.stop) || null;
+    const programs = (this.epg[ch.tvgId] || []).filter((p) => p.stop > now).slice(0, 24)
+      .map((p) => ({ ...p, isLive: p.start <= now && now < p.stop }));
+    return { channel: this.view(ch), programs };
   }
 
-  // Play a channel in a voice channel
-  play(voiceChannelId, iptvChannelId, requestedBy) {
-    if (!this.enabled) {
-      throw new Error('IPTV bot is disabled');
-    }
-
-    if (!this.configured) {
-      throw new Error('IPTV not configured');
-    }
-
-    const channel = this.channels.find(ch => ch.id === iptvChannelId);
-    if (!channel) {
-      throw new Error('IPTV channel not found');
-    }
-
-    const currentProgram = this.getCurrentProgram(iptvChannelId);
-
-    this.activeStreams[voiceChannelId] = {
-      iptvChannel: channel,
-      currentProgram,
-      startTime: Date.now(),
-      requestedBy
+  async play(voiceChannelId, iptvChannelId, requestedBy) {
+    if (!this.enabled) throw new Error('IPTV bot is turned off');
+    if (!this.configured) throw new Error('IPTV is not set up yet (an admin adds a playlist in Bots)');
+    if (!voiceChannelId) throw new Error('voiceChannelId is required');
+    const ch = this.channels.find((c) => c.id === iptvChannelId);
+    if (!ch) throw new Error('IPTV channel not found');
+    let format;
+    try { format = await probe(ch.url); } catch (e) { throw new Error(`${ch.name} is not reachable: ${e.message}`); }
+    const program = this.nowPlaying(ch);
+    const session = {
+      channelId: voiceChannelId, iptvChannelId: ch.id, channelName: ch.name, group: ch.group, logo: proxyUrl(ch.logo),
+      currentProgram: program && { title: program.title, start: program.start, stop: program.stop },
+      streamUrl: proxyUrl(ch.url), format, requestedBy, startTime: Date.now(),
     };
-
-    this.io.to(`voice:${voiceChannelId}`).emit('iptv:playing', {
-      channelId: voiceChannelId,
-      channelName: channel.name,
-      iptvChannel: channel,
-      currentProgram,
-      streamUrl: channel.url
-    });
-
-    return {
-      channel: channel.name,
-      streamUrl: channel.url,
-      currentProgram
-    };
+    this.activeStreams[voiceChannelId] = session;
+    this.io.to(`voice:${voiceChannelId}`).emit('iptv:playing', session);
+    return session;
   }
 
-  // Change channel
-  changeChannel(voiceChannelId, iptvChannelId, requestedBy) {
-    return this.play(voiceChannelId, iptvChannelId, requestedBy);
-  }
-
-  // Stop playback
   stop(voiceChannelId) {
-    if (voiceChannelId) {
-      if (this.activeStreams[voiceChannelId]) {
-        delete this.activeStreams[voiceChannelId];
-        this.io.to(`voice:${voiceChannelId}`).emit('iptv:stopped', { channelId: voiceChannelId });
-      }
-    } else {
-      this.stopAll();
-    }
+    if (!this.activeStreams[voiceChannelId]) return { stopped: false };
+    delete this.activeStreams[voiceChannelId];
+    this.io.to(`voice:${voiceChannelId}`).emit('iptv:stopped', { channelId: voiceChannelId });
     return { stopped: true };
   }
 
   stopAll() {
-    for (const channelId in this.activeStreams) {
-      this.io.to(`voice:${channelId}`).emit('iptv:stopped', { channelId });
-    }
-    this.activeStreams = {};
+    for (const id of Object.keys(this.activeStreams)) this.stop(id);
   }
 
-  // Schedule a recording
-  scheduleRecording(iptvChannelId, programTitle, startTime, endTime, requestedBy, taggedUsers = []) {
-    const channel = this.channels.find(ch => ch.id === iptvChannelId);
-    if (!channel) {
-      throw new Error('IPTV channel not found');
-    }
-
-    const recording = {
-      id: `rec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      channelId: iptvChannelId,
-      channelName: channel.name,
-      programTitle,
-      startTime: new Date(startTime),
-      endTime: new Date(endTime),
-      requestedBy,
-      taggedUsers,
-      status: 'scheduled',
-      createdAt: new Date()
-    };
-
-    this.scheduledRecordings.push(recording);
-
-    // Notify tagged users
-    for (const userId of taggedUsers) {
-      this.io.to(`user:${userId}`).emit('iptv:recording-scheduled', {
-        recording,
-        taggedBy: requestedBy
-      });
-    }
-
-    return recording;
+  sessionFor(channelId) {
+    const s = this.activeStreams[channelId];
+    return s && { event: 'iptv:playing', data: s };
   }
 
-  // Get scheduled recordings
-  getScheduledRecordings(userId = null) {
-    if (userId) {
-      return this.scheduledRecordings.filter(r =>
-        r.requestedBy === userId || r.taggedUsers.includes(userId)
-      );
-    }
-    return this.scheduledRecordings;
-  }
-
-  // Get recordings
-  getRecordings(userId = null) {
-    if (userId) {
-      return this.recordings.filter(r =>
-        r.requestedBy === userId || r.taggedUsers.includes(userId)
-      );
-    }
-    return this.recordings;
-  }
-
-  // Cancel a scheduled recording
-  cancelRecording(recordingId, userId) {
-    const index = this.scheduledRecordings.findIndex(r => r.id === recordingId);
-    if (index === -1) {
-      throw new Error('Recording not found');
-    }
-
-    const recording = this.scheduledRecordings[index];
-    if (recording.requestedBy !== userId) {
-      throw new Error('Only the user who scheduled the recording can cancel it');
-    }
-
-    this.scheduledRecordings.splice(index, 1);
-
-    // Notify tagged users
-    for (const taggedUserId of recording.taggedUsers) {
-      this.io.to(`user:${taggedUserId}`).emit('iptv:recording-cancelled', {
-        recording,
-        cancelledBy: userId
-      });
-    }
-
-    return { cancelled: true };
-  }
-
-  // Tag a user on a recording
-  tagUserOnRecording(recordingId, targetUserId, taggedBy) {
-    let recording = this.recordings.find(r => r.id === recordingId);
-    if (!recording) {
-      recording = this.scheduledRecordings.find(r => r.id === recordingId);
-    }
-
-    if (!recording) {
-      throw new Error('Recording not found');
-    }
-
-    if (!recording.taggedUsers.includes(targetUserId)) {
-      recording.taggedUsers.push(targetUserId);
-
-      this.io.to(`user:${targetUserId}`).emit('iptv:tagged-on-recording', {
-        recording,
-        taggedBy
-      });
-    }
-
-    return recording;
-  }
-
-  // Get status
   getStatus() {
     return {
       enabled: this.enabled,
       configured: this.configured,
       channelCount: this.channels.length,
       groupCount: this.getGroups().length,
-      hasEPG: Object.keys(this.epgData).length > 0,
-      activeStreams: Object.entries(this.activeStreams).map(([channelId, stream]) => ({
-        channelId,
-        iptvChannel: stream.iptvChannel.name,
-        currentProgram: stream.currentProgram?.title
-      })),
-      scheduledRecordingsCount: this.scheduledRecordings.length,
-      recordingsCount: this.recordings.length
+      hasEPG: Object.keys(this.epg).length > 0,
+      playlistFrom: this.playlistUrl ? 'url' : this.configured ? 'upload' : null, // the URL itself may hold the account
+      activeStreams: Object.values(this.activeStreams),
     };
   }
 }
 
-module.exports = { IPTVBotService };
+module.exports = { IPTVBotService, parseM3U, parseXMLTV, xmltvTime };

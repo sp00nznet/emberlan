@@ -68,6 +68,26 @@ audio both ways, deafen, camera on and off, leaving. Then Game Together end to e
 - A connected controller takes over from the touch pad.
 - Leaving frees the virtual pad, and the host ending the session closes the play view.
 
+**Bots** (`conformance/bots.js`) run against a fake media server started by the harness. It
+speaks the Plex, Jellyfin, Emby, IPTV-provider and YouTube oEmbed APIs, checks their credentials,
+and serves real test media from `conformance/media/` (ffmpeg test patterns, with byte ranges).
+
+The live corpus checks, per bot:
+- only admins set it up, and a wrong key is refused;
+- status, search results, channel lists and play events never contain a key, the IPTV account or
+  the media server's address;
+- someone outside the voice channel can't play or stop;
+- the stream proxy refuses links it didn't issue;
+- **formats:** an mp4 seeks through the proxy with byte ranges; Plex MKV and Jellyfin/Emby movies
+  come back as HLS whose segments also go through the proxy; IPTV streams are detected as HLS (with
+  or without `.m3u8`) or raw TS;
+- a dead IPTV channel gives an error;
+- a late joiner gets what's playing;
+- settings survive a server restart.
+
+The UI corpus has a non-admin use each dialog (search, play, stop; IPTV channel list; YouTube link)
+and checks the media really decodes on both users' screens: time advances, and video has frames.
+
 The contract corpus checks the desktop's input-to-Xbox-pad mapping (`electron-client/gamepads.js`)
 against a stand-in for ViGEmBus, and that a missing driver is reported instead of crashing. This corpus exists because the static
 and live checks passed while the real page had a CSP that blocked every script and button.

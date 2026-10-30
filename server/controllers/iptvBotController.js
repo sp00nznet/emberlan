@@ -1,206 +1,31 @@
-/**
- * IPTV Bot Controller
- */
+// HTTP API for the IPTV bot (services/iptvBotService.js). routes/api.js says who may call what.
+const { route, assertInVoice } = require('./mediaServerBotController');
 
-let iptvBotService = null;
-
-const initialize = (service) => {
-  iptvBotService = service;
-};
-
-const getStatus = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    res.json(iptvBotService.getStatus());
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const setEnabled = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const { enabled } = req.body;
-    const result = iptvBotService.setEnabled(enabled);
-    res.json({ message: enabled ? 'IPTV bot enabled' : 'IPTV bot disabled', ...result });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const configure = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-
-    // Handle file upload
-    if (!req.file) {
-      return res.status(400).json({ error: 'M3U playlist file is required' });
-    }
-
-    const epgUrl = req.body.epgUrl || null;
-    const result = await iptvBotService.configureFromFile(req.file.path, epgUrl);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const getChannels = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const { group } = req.query;
-    const channels = iptvBotService.getChannels(group);
-    res.json({ channels });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const getGroups = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const groups = iptvBotService.getGroups();
-    res.json({ groups });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const getEPG = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const { channelId } = req.params;
-    const { date } = req.query;
-    const epg = iptvBotService.getChannelEPG(channelId, date ? new Date(date) : new Date());
-    if (!epg) {
-      return res.status(404).json({ error: 'Channel not found' });
-    }
-    res.json(epg);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const play = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const { voiceChannelId, iptvChannelId } = req.body;
-    if (!voiceChannelId || !iptvChannelId) {
-      return res.status(400).json({ error: 'Voice channel ID and IPTV channel ID are required' });
-    }
-    const result = iptvBotService.play(voiceChannelId, iptvChannelId, req.user?.username || 'User');
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const changeChannel = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const { voiceChannelId, iptvChannelId } = req.body;
-    if (!voiceChannelId || !iptvChannelId) {
-      return res.status(400).json({ error: 'Voice channel ID and IPTV channel ID are required' });
-    }
-    const result = iptvBotService.changeChannel(voiceChannelId, iptvChannelId, req.user?.username || 'User');
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const stop = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const { voiceChannelId } = req.body;
-    const result = iptvBotService.stop(voiceChannelId);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const scheduleRecording = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const { iptvChannelId, programTitle, startTime, endTime, taggedUsers } = req.body;
-    if (!iptvChannelId || !programTitle || !startTime || !endTime) {
-      return res.status(400).json({ error: 'Channel, program title, start time, and end time are required' });
-    }
-    const result = iptvBotService.scheduleRecording(
-      iptvChannelId, programTitle, startTime, endTime,
-      req.user?.username || 'User', taggedUsers || []
-    );
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const getRecordings = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const recordings = iptvBotService.getRecordings(req.user?.username);
-    const scheduled = iptvBotService.getScheduledRecordings(req.user?.username);
-    res.json({ recordings, scheduled });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const cancelRecording = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const { recordingId } = req.params;
-    const result = iptvBotService.cancelRecording(recordingId, req.user?.username || 'User');
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const tagUser = async (req, res) => {
-  try {
-    if (!iptvBotService) {
-      return res.status(503).json({ error: 'IPTV bot service not initialized' });
-    }
-    const { recordingId } = req.params;
-    const { targetUserId } = req.body;
-    if (!targetUserId) {
-      return res.status(400).json({ error: 'Target user ID is required' });
-    }
-    const result = iptvBotService.tagUserOnRecording(recordingId, targetUserId, req.user?.username || 'User');
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+let svc = null;
+const s = () => {
+  if (!svc) throw Object.assign(new Error('IPTV bot service not running'), { status: 503 });
+  return svc;
 };
 
 module.exports = {
-  initialize, getStatus, setEnabled, configure, getChannels, getGroups,
-  getEPG, play, changeChannel, stop, scheduleRecording, getRecordings, cancelRecording, tagUser
+  initialize: (service) => { svc = service; },
+  getStatus: route(() => s().getStatus()),
+  setEnabled: route((req) => s().setEnabled(req.body.enabled)),
+  // multipart: file field "playlist" and/or fields playlistUrl, epgUrl
+  configure: route((req) => s().configure({
+    playlistText: req.file ? req.file.buffer.toString('utf8') : undefined,
+    playlistUrl: req.body.playlistUrl?.trim() || undefined,
+    epgUrl: req.body.epgUrl?.trim() || undefined,
+  })),
+  getChannels: route((req) => ({ channels: s().getChannels(req.query.group) })),
+  getGroups: route(() => ({ groups: s().getGroups() })),
+  getEPG: route((req) => s().getChannelEPG(req.params.channelId)),
+  play: route(async (req) => {
+    await assertInVoice(req, req.body.voiceChannelId);
+    return s().play(req.body.voiceChannelId, req.body.iptvChannelId, req.user.displayName || req.user.username);
+  }),
+  stop: route(async (req) => {
+    await assertInVoice(req, req.body.voiceChannelId);
+    return s().stop(req.body.voiceChannelId);
+  }),
 };

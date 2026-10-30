@@ -923,3 +923,20 @@ body {
 body.gt-playing .toast-container, body.gt-playing .toast-container * { pointer-events: none; }
 body.gt-playing .toast-container { top: 52px; bottom: auto; opacity: 0.9; }
 body.gt-playing .toast { padding: 8px 14px; font-size: 13px; }
+
+/* ===== Plex / Jellyfin / Emby dialog (mediabots.js) ===== */
+.mb-section { margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
+.mb-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--txt-2); font-size: 13px; }
+.mb-now { background: var(--surface); border: 1px solid var(--ember); border-radius: var(--radius-sm); padding: 8px 12px; color: var(--txt-1); }
+.mb-form, .mb-search { display: flex; flex-direction: column; gap: 8px; }
+.mb-search { flex-direction: row; }
+.mb-form input, .mb-search input { flex: 1; padding: 9px 10px; background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--radius-sm); color: var(--txt-1); font: 13px var(--font-ui); }
+.mb-results { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.mb-item { display: flex; align-items: center; gap: 10px; padding: 6px; background: var(--surface); border-radius: var(--radius-sm); }
+.mb-item img, .mb-noimg { width: 40px; height: 56px; object-fit: cover; border-radius: 4px; flex: none; background: var(--bg-stage); display: flex; align-items: center; justify-content: center; color: var(--ember); }
+.mb-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; color: var(--txt-1); }
+.mb-meta small { color: var(--txt-2); font-size: 11px; }
+.mb-hint { color: var(--txt-2); font-size: 13px; }
+.mb-err { color: var(--danger, #e5534b); font-size: 13px; }
+.mb-search select { padding: 9px 10px; background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--radius-sm); color: var(--txt-1); }
+.mb-item .btn-primary, .mb-search .btn-primary, .mb-row button { width: auto; flex: none; padding: 8px 16px; }

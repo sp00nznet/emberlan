@@ -21,6 +21,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
+const bots = require('./bots');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const exists = (p) => fs.existsSync(path.join(ROOT, p));
 const args = new Set(process.argv.slice(2));
@@ -204,13 +205,35 @@ async function live() {
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const log = [];
-  const srv = spawn(process.execPath, ['server/index.js'], {
-    cwd: ROOT,
-    env: { ...process.env, PORT: String(port), MONGODB_URI: mongo.getUri('emberlan-conformance'),
-      JWT_SECRET: 'conformance', FEDERATION_ENABLED: 'false', NODE_ENV: 'test' },
-  });
-  srv.stdout.on('data', (d) => log.push(String(d)));
-  srv.stderr.on('data', (d) => log.push(String(d)));
+  // Fake Plex/Jellyfin/Emby/IPTV/YouTube for the bot checks (conformance/bots.js).
+  const fake = await bots.startFakeMedia();
+  let srv;
+  const startServer = () => {
+    srv = spawn(process.execPath, ['server/index.js'], {
+      cwd: ROOT,
+      env: { ...process.env, PORT: String(port), MONGODB_URI: mongo.getUri('emberlan-conformance'),
+        JWT_SECRET: 'conformance', FEDERATION_ENABLED: 'false', NODE_ENV: 'test',
+        YOUTUBE_OEMBED_URL: `${fake.url}/oembed` },
+    });
+    srv.stdout.on('data', (d) => log.push(String(d)));
+    srv.stderr.on('data', (d) => log.push(String(d)));
+  };
+  const waitUp = async () => {
+    for (const t0 = Date.now(); Date.now() - t0 < 30000;) {
+      try { if ((await fetch(base + '/health')).ok) return true; } catch {}
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    return false;
+  };
+  // Stop and start the server on the same database: proves settings survive a restart.
+  const restart = async () => {
+    const exited = new Promise((r) => srv.once('exit', r));
+    srv.kill();
+    await exited;
+    startServer();
+    return waitUp();
+  };
+  startServer();
 
   const http = async (method, p, token, body) => {
     const r = await fetch(base + p, {
@@ -233,11 +256,7 @@ async function live() {
   });
 
   try {
-    const t0 = Date.now();
-    let up = false;
-    while (Date.now() - t0 < 30000 && !up) {
-      try { up = (await fetch(base + '/health')).ok; } catch { await new Promise((r) => setTimeout(r, 300)); }
-    }
+    const up = await waitUp();
     await check('live/server boots and /health answers', () => up || `server never came up:\n${log.join('').slice(-1500)}`);
     if (!up) return;
     await check('live/web client is served at /', async () => {
@@ -327,10 +346,14 @@ async function live() {
         return !bad || `status ${r.status} ${JSON.stringify(r.json)?.slice(0, 120)}`;
       });
     }
+    if (sa && sb && voice) {
+      await bots.live({ check, http, sock, once, admin, alice, bob, sa, sb, voice, fake, restart, base });
+    }
     sa?.close(); sb?.close();
-    await uiFlow(base, http);
+    await uiFlow(base, http, { fake, voice });
   } finally {
     srv.kill();
+    fake.close();
     await mongo.stop();
   }
 }
@@ -346,7 +369,7 @@ function findBrowser() {
   return c.find((p) => p && fs.existsSync(p));
 }
 
-async function uiFlow(base, http) {
+async function uiFlow(base, http, { fake } = {}) {
   const bin = findBrowser();
   if (!bin) { console.log('SKIP ui - no Chrome/Edge found (set CHROME_PATH)'); return; }
   const os = require('os');
@@ -603,6 +626,10 @@ async function uiFlow(base, http) {
     });
     await page2.send('Emulation.setTouchEmulationEnabled', { enabled: false });
     await evaluate(`stopScreenShare('screen-game')`);
+
+    // Media bots in the real UI: alice (not an admin) drives the dialogs; both users see it play.
+    await page2.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    await bots.ui({ check, host: page1, guest: page2, shot, sleep });
 
     await check('ui/voice: leaving ends the call for the other user', async () => {
       await evaluate('leaveVoice()');

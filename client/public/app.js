@@ -744,7 +744,7 @@ function connectSocket() {
   // YouTube bot events
   state.socket.on('youtube:playing', (data) => {
     console.log('[YouTube] Now playing:', data);
-    addBotVideoToGrid('youtube', data.title, data.url, data.thumbnail);
+    addBotVideoToGrid('youtube', data.title, data.videoId ? `https://www.youtube.com/watch?v=${data.videoId}` : data.url, data.thumbnail);
     showToast(`Now playing: ${data.title}`, 'success');
   });
 
@@ -756,24 +756,8 @@ function connectSocket() {
 
   // IPTV bot events
   state.socket.on('iptv:playing', (data) => {
-    console.log('[IPTV] Now playing:', data);
-    console.log('[IPTV] Original stream URL:', data.streamUrl);
-
-    // Try to get HLS version of the stream (many providers support .m3u8 suffix)
-    let streamUrl = data.streamUrl;
-    if (!streamUrl.includes('.m3u8')) {
-      // Remove any existing extension and add .m3u8 for HLS
-      streamUrl = streamUrl.replace(/\.[^/.]+$/, '') + '.m3u8';
-      // If no extension was present, just append
-      if (!streamUrl.endsWith('.m3u8')) {
-        streamUrl = data.streamUrl + '.m3u8';
-      }
-    }
-
-    // Proxy the stream through our server to bypass CORS
-    const proxyUrl = `${state.serverUrl}/api/stream/proxy?url=${encodeURIComponent(streamUrl)}`;
-    console.log('[IPTV] Proxy URL (HLS):', proxyUrl);
-    addBotVideoToGrid('iptv', data.channelName || 'Live TV', proxyUrl, null);
+    // The server probed the stream: data.format is 'hls' or 'ts'; streamUrl is a proxy link.
+    addBotVideoToGrid('iptv', data.channelName || 'Live TV', `${state.serverUrl}${data.streamUrl}`, data.logo ? `${state.serverUrl}${data.logo}` : null, data.format);
     showToast(`Now watching: ${data.channelName || 'Live TV'}`, 'success');
   });
 
@@ -806,22 +790,9 @@ function connectSocket() {
 
   // Plex/Emby/Jellyfin events
   state.socket.on('media:playing', (data) => {
-    console.log('[Media] Now playing:', data);
-    const label = `${data.source}: ${data.title}`;
-
-    // Prepend serverUrl to relative API paths (proxy URLs)
-    let streamUrl = data.streamUrl;
-    if (streamUrl && streamUrl.startsWith('/api/')) {
-      streamUrl = `${state.serverUrl}${streamUrl}`;
-    }
-
-    let thumbnail = data.thumbnail;
-    if (thumbnail && thumbnail.startsWith('/api/')) {
-      thumbnail = `${state.serverUrl}${thumbnail}`;
-    }
-
-    console.log('[Media] Stream URL:', streamUrl);
-    addBotVideoToGrid(`media-${data.source}`, label, streamUrl, thumbnail);
+    // Plex/Jellyfin/Emby: streamUrl and thumbnail are proxy links on our server.
+    const abs = (u) => (u && u.startsWith('/api/') ? `${state.serverUrl}${u}` : u);
+    addBotVideoToGrid(`media-${data.source}`, `${data.source}: ${data.title}`, abs(data.streamUrl), abs(data.thumbnail), data.format);
     showToast(`Now playing: ${data.title}`, 'success');
   });
 
@@ -2069,7 +2040,7 @@ function removeVideoFromGrid(id) {
 }
 
 // Add bot video/stream to the video grid (YouTube, IPTV, Chrome, Plex, etc.)
-function addBotVideoToGrid(botId, label, url, thumbnail) {
+function addBotVideoToGrid(botId, label, url, thumbnail, format = 'file') {
   console.log('[addBotVideoToGrid] Called with:', { botId, label, url, thumbnail });
   const grid = document.getElementById('videoGrid');
   console.log('[addBotVideoToGrid] videoGrid element:', grid);
@@ -2135,96 +2106,15 @@ function addBotVideoToGrid(botId, label, url, thumbnail) {
       </iframe>
       <div class="video-label">${escapeHtml(label)}</div>
     `;
-  } else if (botId === 'iptv' && url) {
-    // For IPTV, try HLS first, fall back to MPEG-TS
-    const videoId = `iptv-video-${Date.now()}`;
-    tile.innerHTML = `
-      <video id="${videoId}" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: contain; background: #000;"></video>
-      <div class="video-label">${escapeHtml(label)}</div>
-      <button onclick="const v=this.parentElement.querySelector('video'); v.muted=!v.muted; this.textContent=v.muted?'🔊 Unmute':'🔇 Mute';" style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; z-index: 10;">🔊 Unmute</button>
-    `;
-
-    // Store original URL (without .m3u8) for MPEG-TS fallback
-    const originalUrl = url.replace('.m3u8', '');
-
-    // After appending to DOM, initialize player
-    setTimeout(() => {
-      const video = document.getElementById(videoId);
-      if (!video || !url) return;
-
-      const tryMpegTs = () => {
-        console.log('[IPTV] Trying MPEG-TS fallback with mpegts.js');
-        if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-          const player = mpegts.createPlayer({
-            type: 'mpegts',
-            isLive: true,
-            url: originalUrl
-          });
-          player.attachMediaElement(video);
-          player.load();
-          player.play().catch(e => console.log('[IPTV] MPEG-TS autoplay blocked:', e));
-          video._mpegts = player;
-          console.log('[IPTV] MPEG-TS player initialized');
-        } else {
-          console.error('[IPTV] mpegts.js not supported');
-          tile.querySelector('.video-label').textContent = `${label} (Format not supported)`;
-        }
-      };
-
-      if (Hls && Hls.isSupported()) {
-        console.log('[IPTV] Trying HLS first');
-        const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-        hls.loadSource(url);
-        hls.attachMedia(video);
-
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          console.log('[IPTV] HLS manifest parsed, playing');
-          video.play().catch(e => console.log('[IPTV] Autoplay blocked:', e));
-        });
-
-        hls.on(Hls.Events.ERROR, (event, data) => {
-          console.error('[IPTV] HLS error:', data.type, data.details);
-          if (data.fatal) {
-            console.log('[IPTV] Fatal HLS error, trying MPEG-TS fallback');
-            hls.destroy();
-            tryMpegTs();
-          }
-        });
-
-        video._hls = hls;
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        // Native HLS support (Safari)
-        video.src = url;
-        video.play().catch(e => console.log('[IPTV] Autoplay blocked:', e));
-      } else {
-        // No HLS support, try MPEG-TS directly
-        tryMpegTs();
-      }
-    }, 100);
   } else if (url) {
-    // For other bots (Plex, Emby, Jellyfin), use video element with HLS support
-    const videoId = `media-video-${Date.now()}`;
+    // Plex/Jellyfin/Emby/IPTV: a stream through the server's proxy. format comes from the server:
+    // 'hls' (hls.js), 'ts' (mpegts.js, plain MPEG-TS) or 'file' (the browser plays it directly).
     tile.innerHTML = `
-      <video id="${videoId}" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: contain; background: #000;"></video>
+      <video class="bot-media" autoplay playsinline ${thumbnail ? `poster="${escapeHtml(thumbnail)}"` : ''} style="width: 100%; height: 100%; object-fit: contain; background: #000;"></video>
       <div class="video-label">${escapeHtml(label)}</div>
-      <button onclick="const v=this.parentElement.querySelector('video'); v.muted=!v.muted; this.textContent=v.muted?'🔊 Unmute':'🔇 Mute';" style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; z-index: 10;">🔊 Unmute</button>
+      <button class="bot-unmute" style="display: none; position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; z-index: 10;">🔊 Unmute</button>
     `;
-    setTimeout(() => {
-      const video = document.getElementById(videoId);
-      if (video && url) {
-        // Check if it's an HLS stream
-        if (url.includes('.m3u8') && Hls && Hls.isSupported()) {
-          const hls = new Hls();
-          hls.loadSource(url);
-          hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
-          video._hls = hls;
-        } else {
-          video.src = url;
-          video.play().catch(() => {});
-        }
-      }
-    }, 100);
+    attachBotStream(tile.querySelector('video'), url, format, tile.querySelector('.bot-unmute'));
   } else if (thumbnail) {
     // Fallback to thumbnail with label
     tile.innerHTML = `
@@ -2248,6 +2138,40 @@ function addBotVideoToGrid(botId, label, url, thumbnail) {
 
   grid.appendChild(tile);
   console.log('[addBotVideoToGrid] Tile appended to grid. Current grid children:', grid.children.length);
+}
+
+// Play a bot stream in a <video>. Starts with sound if the browser allows it (joining voice was a
+// click), otherwise muted with an Unmute button.
+function attachBotStream(video, url, format, unmuteBtn) {
+  const start = () => video.play().catch(() => {
+    video.muted = true;
+    unmuteBtn.style.display = '';
+    video.play().catch(() => {});
+  });
+  unmuteBtn.onclick = () => { video.muted = false; unmuteBtn.style.display = 'none'; video.play().catch(() => {}); };
+  const mpegtsPlay = () => {
+    if (typeof mpegts === 'undefined' || !mpegts.isSupported()) return;
+    const player = mpegts.createPlayer({ type: 'mpegts', isLive: true, url });
+    player.attachMediaElement(video);
+    player.load();
+    video._mpegts = player;
+    start();
+  };
+  if (format === 'ts') return mpegtsPlay();
+  if (format === 'hls') {
+    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true });
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, start);
+      hls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) console.error('[bot stream] HLS error:', d.details); });
+      video._hls = hls;
+      return;
+    }
+    // Safari/WebView with native HLS falls through to src.
+  }
+  video.src = url;
+  start();
 }
 
 // Remove bot video from the grid
@@ -3311,556 +3235,6 @@ async function updateUserRole(userId, role) {
   }
 }
 
-// YouTube Bot Modal
-async function openYouTubeBotModal() {
-  const prevModal = state.previousModal; // Preserve for refresh
-  const overlay = document.getElementById('modalOverlay');
-  const modal = document.getElementById('modalContent');
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2>YouTube Bot</h2>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div id="youtubeBotContent">Loading...</div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModal()">Close</button>
-    </div>
-  `;
-
-  overlay.classList.add('active');
-  if (prevModal) state.previousModal = prevModal; // Restore for refresh
-
-  // Load bot status
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/youtube-bot/status`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-
-    renderYouTubeBotContent(data);
-  } catch (error) {
-    document.getElementById('youtubeBotContent').innerHTML = `
-      <p style="color: var(--danger);">Failed to load YouTube bot status: ${error.message}</p>
-      <p style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">
-        Make sure the server has ytdl-core installed: <code>npm install @distube/ytdl-core</code>
-      </p>
-    `;
-  }
-}
-
-function renderYouTubeBotContent(data) {
-  const { enabled, activeStreams } = data;
-  const streamList = activeStreams || [];
-
-  document.getElementById('youtubeBotContent').innerHTML = `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Bot Status</h3>
-      <div style="display: flex; align-items: center; gap: 16px; margin-top: 12px;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="color: var(--text-muted);">Status:</span>
-          <span style="color: ${enabled ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">
-            ${enabled ? 'Enabled' : 'Disabled'}
-          </span>
-        </div>
-        <button class="btn-${enabled ? 'danger' : 'primary'}" onclick="toggleYouTubeBot(${!enabled})">
-          ${enabled ? 'Disable Bot' : 'Enable Bot'}
-        </button>
-      </div>
-    </div>
-
-    ${enabled ? `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Play Video</h3>
-      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <label style="min-width: 80px;">Channel:</label>
-          <select id="ytBotChannel" style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-            ${state.channels.filter(c => c.type === 'voice' || c.type === 'video').map(c => `
-              <option value="${c._id}">${escapeHtml(c.name)}</option>
-            `).join('')}
-          </select>
-        </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <label style="min-width: 80px;">URL:</label>
-          <input type="text" id="ytBotUrl" placeholder="YouTube video URL" style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-        </div>
-        <div style="display: flex; gap: 8px;">
-          <button class="btn-primary" onclick="playYouTubeVideo()">Play</button>
-          <button class="btn-secondary" onclick="previewYouTubeVideo()">Preview Info</button>
-        </div>
-        <div id="ytVideoPreview" style="display: none; padding: 12px; background: var(--bg-dark); border-radius: var(--radius-sm);"></div>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <h3>Active Streams (${streamList.length})</h3>
-      <div id="ytActiveStreams" style="margin-top: 12px;">
-        ${streamList.length > 0 ? streamList.map(stream => `
-          <div style="display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px;">
-            <div style="flex: 1;">
-              <div style="font-weight: 500;">${escapeHtml(stream.title || 'Unknown')}</div>
-              <div style="font-size: 12px; color: var(--text-muted);">
-                Channel: ${escapeHtml(stream.channelName || stream.channelId)} •
-                By: ${escapeHtml(stream.requestedBy || 'Unknown')}
-              </div>
-            </div>
-            <button class="btn-danger" onclick="stopYouTubeStream('${stream.channelId}')" style="padding: 6px 12px;">Stop</button>
-          </div>
-        `).join('') : '<p style="color: var(--text-muted);">No active streams</p>'}
-      </div>
-      ${streamList.length > 0 ? `
-        <button class="btn-danger" onclick="stopAllYouTubeStreams()" style="margin-top: 12px;">Stop All Streams</button>
-      ` : ''}
-    </div>
-    ` : `
-    <div style="text-align: center; padding: 24px; color: var(--text-muted);">
-      <p>Enable the bot to play YouTube videos in voice channels.</p>
-    </div>
-    `}
-  `;
-}
-
-async function toggleYouTubeBot(enabled) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/youtube-bot/enable`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`
-      },
-      body: JSON.stringify({ enabled })
-    });
-
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-
-    showToast(result.message, 'success');
-    openYouTubeBotModal(); // Refresh
-  } catch (error) {
-    showToast('Failed to toggle bot: ' + error.message, 'error');
-  }
-}
-
-async function previewYouTubeVideo() {
-  const url = document.getElementById('ytBotUrl').value.trim();
-  if (!url) {
-    showToast('Please enter a YouTube URL', 'error');
-    return;
-  }
-
-  const preview = document.getElementById('ytVideoPreview');
-  preview.style.display = 'block';
-  preview.innerHTML = 'Loading video info...';
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/youtube-bot/video-info?url=${encodeURIComponent(url)}`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-
-    preview.innerHTML = `
-      <div style="display: flex; gap: 12px;">
-        ${data.thumbnail ? `<img src="${data.thumbnail}" style="width: 120px; height: 68px; border-radius: 4px; object-fit: cover;">` : ''}
-        <div>
-          <div style="font-weight: 600;">${escapeHtml(data.title)}</div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-            ${escapeHtml(data.author)} • ${data.duration || 'Unknown duration'}
-          </div>
-        </div>
-      </div>
-    `;
-  } catch (error) {
-    preview.innerHTML = `<span style="color: var(--danger);">Failed to load: ${error.message}</span>`;
-  }
-}
-
-async function playYouTubeVideo() {
-  const channelId = document.getElementById('ytBotChannel').value;
-  const url = document.getElementById('ytBotUrl').value.trim();
-
-  if (!channelId) {
-    showToast('Please select a channel', 'error');
-    return;
-  }
-  if (!url) {
-    showToast('Please enter a YouTube URL', 'error');
-    return;
-  }
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/youtube-bot/play`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`
-      },
-      body: JSON.stringify({ channelId, url })
-    });
-
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-
-    showToast(`Now playing: ${result.title || 'Video'}`, 'success');
-    openYouTubeBotModal(); // Refresh
-  } catch (error) {
-    showToast('Failed to play video: ' + error.message, 'error');
-  }
-}
-
-async function stopYouTubeStream(channelId) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/youtube-bot/stop`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`
-      },
-      body: JSON.stringify({ channelId })
-    });
-
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-
-    showToast('Playback stopped', 'success');
-    openYouTubeBotModal(); // Refresh
-  } catch (error) {
-    showToast('Failed to stop: ' + error.message, 'error');
-  }
-}
-
-async function stopAllYouTubeStreams() {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/youtube-bot/stop`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`
-      },
-      body: JSON.stringify({})
-    });
-
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-
-    showToast('All streams stopped', 'success');
-    openYouTubeBotModal(); // Refresh
-  } catch (error) {
-    showToast('Failed to stop streams: ' + error.message, 'error');
-  }
-}
-
-// ==================== Plex Bot Modal ====================
-async function openPlexBotModal() {
-  const prevModal = state.previousModal;
-  const overlay = document.getElementById('modalOverlay');
-  const modal = document.getElementById('modalContent');
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2>Plex Bot</h2>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div id="plexBotContent">Loading...</div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModal()">Close</button>
-    </div>
-  `;
-
-  overlay.classList.add('active');
-  if (prevModal) state.previousModal = prevModal;
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/plex-bot/status`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-
-    renderPlexBotContent(data);
-  } catch (error) {
-    document.getElementById('plexBotContent').innerHTML = `
-      <p style="color: var(--danger);">Failed to load Plex bot status: ${error.message}</p>
-    `;
-  }
-}
-
-function renderPlexBotContent(data) {
-  const { enabled, connected, activeStreams, serverInfo } = data;
-  const streamList = activeStreams || [];
-
-  document.getElementById('plexBotContent').innerHTML = `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Bot Status</h3>
-      <div style="display: flex; align-items: center; gap: 16px; margin-top: 12px;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="color: var(--text-muted);">Status:</span>
-          <span style="color: ${enabled ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">
-            ${enabled ? 'Enabled' : 'Disabled'}
-          </span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="color: var(--text-muted);">Plex:</span>
-          <span style="color: ${connected ? 'var(--success)' : 'var(--text-muted)'}; font-weight: 600;">
-            ${connected ? 'Connected' : 'Not Connected'}
-          </span>
-        </div>
-        <button class="btn-${enabled ? 'danger' : 'primary'}" onclick="togglePlexBot(${!enabled})">
-          ${enabled ? 'Disable Bot' : 'Enable Bot'}
-        </button>
-      </div>
-    </div>
-
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Plex Account</h3>
-      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-        ${connected && serverInfo ? `
-          <div style="padding: 12px; background: var(--bg-dark); border-radius: var(--radius-sm);">
-            <div style="font-weight: 600;">${escapeHtml(serverInfo.name || 'Plex Server')}</div>
-            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-              ${serverInfo.libraries?.length || 0} libraries available
-            </div>
-          </div>
-          <button class="btn-danger" onclick="disconnectPlex()">Disconnect Plex</button>
-        ` : `
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <label style="min-width: 100px;">Server URL:</label>
-            <input type="text" id="plexServerUrl" placeholder="http://your-plex:32400" style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          </div>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <label style="min-width: 100px;">Plex Token:</label>
-            <input type="password" id="plexToken" placeholder="Your Plex token" style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          </div>
-          <div style="font-size: 11px; color: var(--text-muted);">
-            Get your token from app.plex.tv settings or use plex-token CLI tools
-          </div>
-          <button class="btn-primary" onclick="connectPlex()">Connect to Plex</button>
-        `}
-      </div>
-    </div>
-
-    ${enabled && connected ? `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Play Media</h3>
-      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <label style="min-width: 80px;">Channel:</label>
-          <select id="plexBotChannel" style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-            ${state.channels.filter(c => c.type === 'voice' || c.type === 'video').map(c => `
-              <option value="${c._id}">${escapeHtml(c.name)}</option>
-            `).join('')}
-          </select>
-        </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <label style="min-width: 80px;">Search:</label>
-          <input type="text" id="plexSearch" placeholder="Search for music, movies..." style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          <button class="btn-secondary" onclick="searchPlex()">Search</button>
-        </div>
-        <div id="plexSearchResults" style="max-height: 200px; overflow-y: auto;"></div>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <h3>Active Streams (${streamList.length})</h3>
-      <div id="plexActiveStreams" style="margin-top: 12px;">
-        ${streamList.length > 0 ? streamList.map(stream => `
-          <div style="display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px;">
-            <div style="flex: 1;">
-              <div style="font-weight: 500;">${escapeHtml(stream.title || 'Unknown')}</div>
-              <div style="font-size: 12px; color: var(--text-muted);">
-                Channel: ${escapeHtml(stream.channelName || stream.channelId)}
-              </div>
-            </div>
-            <button class="btn-danger" onclick="stopPlexStream('${stream.channelId}')" style="padding: 6px 12px;">Stop</button>
-          </div>
-        `).join('') : '<p style="color: var(--text-muted);">No active streams</p>'}
-      </div>
-      ${streamList.length > 0 ? `
-        <button class="btn-danger" onclick="stopAllPlexStreams()" style="margin-top: 12px;">Stop All Streams</button>
-      ` : ''}
-    </div>
-    ` : ''}
-  `;
-}
-
-async function togglePlexBot(enabled) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/plex-bot/enable`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`
-      },
-      body: JSON.stringify({ enabled })
-    });
-
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-
-    showToast(result.message, 'success');
-    openPlexBotModal();
-  } catch (error) {
-    showToast('Failed to toggle Plex bot: ' + error.message, 'error');
-  }
-}
-
-async function connectPlex() {
-  const serverUrl = document.getElementById('plexServerUrl').value.trim();
-  const token = document.getElementById('plexToken').value.trim();
-
-  if (!serverUrl || !token) {
-    showToast('Please enter server URL and token', 'error');
-    return;
-  }
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/plex-bot/connect`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`
-      },
-      body: JSON.stringify({ serverUrl, token })
-    });
-
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-
-    showToast('Connected to Plex!', 'success');
-    openPlexBotModal();
-  } catch (error) {
-    showToast('Failed to connect: ' + error.message, 'error');
-  }
-}
-
-async function disconnectPlex() {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/plex-bot/disconnect`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`
-      }
-    });
-
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-
-    showToast('Disconnected from Plex', 'success');
-    openPlexBotModal();
-  } catch (error) {
-    showToast('Failed to disconnect: ' + error.message, 'error');
-  }
-}
-
-async function searchPlex() {
-  const query = document.getElementById('plexSearch').value.trim();
-  if (!query) {
-    showToast('Please enter a search query', 'error');
-    return;
-  }
-
-  const resultsDiv = document.getElementById('plexSearchResults');
-  resultsDiv.innerHTML = 'Searching...';
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/plex-bot/search?query=${encodeURIComponent(query)}`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-
-    const results = data.results || [];
-    resultsDiv.innerHTML = results.length > 0 ? results.map(item => `
-      <div style="display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px; cursor: pointer;" onclick="playPlexItem('${item.ratingKey}')">
-        ${item.thumb ? `<img src="${state.serverUrl}/api/admin/plex-bot/thumb?key=${encodeURIComponent(item.thumb)}" style="width: 48px; height: 48px; border-radius: 4px; object-fit: cover;">` : ''}
-        <div style="flex: 1;">
-          <div style="font-weight: 500;">${escapeHtml(item.title)}</div>
-          <div style="font-size: 12px; color: var(--text-muted);">${escapeHtml(item.type)} ${item.year ? '(' + item.year + ')' : ''}</div>
-        </div>
-        <button class="btn-primary" style="padding: 6px 12px;" onclick="event.stopPropagation(); playPlexItem('${item.ratingKey}')">Play</button>
-      </div>
-    `).join('') : '<p style="color: var(--text-muted);">No results found</p>';
-  } catch (error) {
-    resultsDiv.innerHTML = `<span style="color: var(--danger);">Search failed: ${error.message}</span>`;
-  }
-}
-
-async function playPlexItem(ratingKey) {
-  const channelId = document.getElementById('plexBotChannel').value;
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/plex-bot/play`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`
-      },
-      body: JSON.stringify({ channelId, ratingKey })
-    });
-
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-
-    showToast(`Now playing: ${result.title || 'Media'}`, 'success');
-    openPlexBotModal();
-  } catch (error) {
-    showToast('Failed to play: ' + error.message, 'error');
-  }
-}
-
-async function stopPlexStream(channelId) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/plex-bot/stop`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`
-      },
-      body: JSON.stringify({ channelId })
-    });
-
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-
-    showToast('Playback stopped', 'success');
-    openPlexBotModal();
-  } catch (error) {
-    showToast('Failed to stop: ' + error.message, 'error');
-  }
-}
-
-async function stopAllPlexStreams() {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/plex-bot/stop`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`
-      },
-      body: JSON.stringify({})
-    });
-
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-
-    showToast('All Plex streams stopped', 'success');
-    openPlexBotModal();
-  } catch (error) {
-    showToast('Failed to stop streams: ' + error.message, 'error');
-  }
-}
-
 // ==================== Federation Modal ====================
 async function openFederationModal() {
   const overlay = document.getElementById('modalOverlay');
@@ -4119,247 +3493,6 @@ async function kickUserFromChannel(userId, channelId) {
   }
 }
 
-// ==================== Emby Bot Modal ====================
-async function openEmbyBotModal() {
-  const prevModal = state.previousModal;
-  const overlay = document.getElementById('modalOverlay');
-  const modal = document.getElementById('modalContent');
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2>Emby Bot</h2>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div id="embyBotContent">Loading...</div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModal()">Close</button>
-    </div>
-  `;
-
-  overlay.classList.add('active');
-  if (prevModal) state.previousModal = prevModal;
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/emby-bot/status`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    renderMediaBotContent('emby', data);
-  } catch (error) {
-    document.getElementById('embyBotContent').innerHTML = `<p style="color: var(--danger);">Failed to load: ${error.message}</p>`;
-  }
-}
-
-// ==================== Jellyfin Bot Modal ====================
-async function openJellyfinBotModal() {
-  const prevModal = state.previousModal;
-  const overlay = document.getElementById('modalOverlay');
-  const modal = document.getElementById('modalContent');
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2>Jellyfin Bot</h2>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div id="jellyfinBotContent">Loading...</div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModal()">Close</button>
-    </div>
-  `;
-
-  overlay.classList.add('active');
-  if (prevModal) state.previousModal = prevModal;
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/jellyfin-bot/status`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    renderMediaBotContent('jellyfin', data);
-  } catch (error) {
-    document.getElementById('jellyfinBotContent').innerHTML = `<p style="color: var(--danger);">Failed to load: ${error.message}</p>`;
-  }
-}
-
-// Generic media bot content renderer (Emby/Jellyfin)
-function renderMediaBotContent(botType, data) {
-  const { enabled, connected, serverInfo, activeStreams } = data;
-  const streamList = activeStreams || [];
-  const contentId = `${botType}BotContent`;
-
-  document.getElementById(contentId).innerHTML = `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Bot Status</h3>
-      <div style="display: flex; align-items: center; gap: 16px; margin-top: 12px;">
-        <span style="color: ${enabled ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">${enabled ? 'Enabled' : 'Disabled'}</span>
-        <span style="color: ${connected ? 'var(--success)' : 'var(--text-muted)'};">${connected ? 'Connected' : 'Not Connected'}</span>
-        <button class="btn-${enabled ? 'danger' : 'primary'}" onclick="toggleMediaBot('${botType}', ${!enabled})">${enabled ? 'Disable' : 'Enable'}</button>
-      </div>
-    </div>
-
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Server Connection</h3>
-      ${connected && serverInfo ? `
-        <div style="padding: 12px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-top: 12px;">
-          <div style="font-weight: 600;">${escapeHtml(serverInfo.name || 'Server')}</div>
-          <div style="font-size: 12px; color: var(--text-muted);">Version: ${serverInfo.version || 'Unknown'}</div>
-        </div>
-        <button class="btn-danger" onclick="disconnectMediaBot('${botType}')" style="margin-top: 8px;">Disconnect</button>
-      ` : `
-        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-          <input type="text" id="${botType}ServerUrl" placeholder="Server URL (http://server:port)" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          <input type="password" id="${botType}ApiKey" placeholder="API Key" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          <button class="btn-primary" onclick="connectMediaBot('${botType}')">Connect</button>
-        </div>
-      `}
-    </div>
-
-    ${enabled && connected ? `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Play Media</h3>
-      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-        <select id="${botType}Channel" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          ${state.channels.filter(c => c.type === 'voice' || c.type === 'video').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
-        </select>
-        <div style="display: flex; gap: 8px;">
-          <input type="text" id="${botType}Search" placeholder="Search..." style="flex: 1; padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          <button class="btn-secondary" onclick="searchMediaBot('${botType}')">Search</button>
-        </div>
-        <div id="${botType}Results" style="max-height: 200px; overflow-y: auto;"></div>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <h3>Active Streams (${streamList.length})</h3>
-      <div style="margin-top: 12px;">
-        ${streamList.length > 0 ? streamList.map(s => `
-          <div style="display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px;">
-            <div style="flex: 1;">
-              <div style="font-weight: 500;">${escapeHtml(s.title || 'Unknown')}</div>
-            </div>
-            <button class="btn-danger" onclick="stopMediaBot('${botType}', '${s.channelId}')" style="padding: 6px 12px;">Stop</button>
-          </div>
-        `).join('') : '<p style="color: var(--text-muted);">No active streams</p>'}
-      </div>
-    </div>
-    ` : ''}
-  `;
-}
-
-async function toggleMediaBot(botType, enabled) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/${botType}-bot/enable`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ enabled })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast(result.message, 'success');
-    if (botType === 'emby') openEmbyBotModal();
-    else if (botType === 'jellyfin') openJellyfinBotModal();
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function connectMediaBot(botType) {
-  const serverUrl = document.getElementById(`${botType}ServerUrl`).value.trim();
-  const apiKey = document.getElementById(`${botType}ApiKey`).value.trim();
-  if (!serverUrl || !apiKey) { showToast('Please enter server URL and API key', 'error'); return; }
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/${botType}-bot/connect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ serverUrl, apiKey })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast('Connected!', 'success');
-    if (botType === 'emby') openEmbyBotModal();
-    else if (botType === 'jellyfin') openJellyfinBotModal();
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function disconnectMediaBot(botType) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/${botType}-bot/disconnect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` }
-    });
-    if (!response.ok) throw new Error((await response.json()).error);
-    showToast('Disconnected', 'success');
-    if (botType === 'emby') openEmbyBotModal();
-    else if (botType === 'jellyfin') openJellyfinBotModal();
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function searchMediaBot(botType) {
-  const query = document.getElementById(`${botType}Search`).value.trim();
-  if (!query) { showToast('Enter a search term', 'error'); return; }
-  const resultsDiv = document.getElementById(`${botType}Results`);
-  resultsDiv.innerHTML = 'Searching...';
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/${botType}-bot/search?query=${encodeURIComponent(query)}`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    resultsDiv.innerHTML = data.results?.length > 0 ? data.results.map(item => `
-      <div style="display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px;">
-        <div style="flex: 1;"><div style="font-weight: 500;">${escapeHtml(item.title)}</div><div style="font-size: 12px; color: var(--text-muted);">${item.type}</div></div>
-        <button class="btn-primary" onclick="playMediaBot('${botType}', '${item.itemId}')" style="padding: 6px 12px;">Play</button>
-      </div>
-    `).join('') : '<p style="color: var(--text-muted);">No results</p>';
-  } catch (error) {
-    resultsDiv.innerHTML = `<span style="color: var(--danger);">${error.message}</span>`;
-  }
-}
-
-async function playMediaBot(botType, itemId) {
-  const channelId = document.getElementById(`${botType}Channel`).value;
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/${botType}-bot/play`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ channelId, itemId })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast(`Playing: ${result.title || 'Media'}`, 'success');
-    if (botType === 'emby') openEmbyBotModal();
-    else if (botType === 'jellyfin') openJellyfinBotModal();
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function stopMediaBot(botType, channelId) {
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/${botType}-bot/stop`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ channelId })
-    });
-    if (!response.ok) throw new Error((await response.json()).error);
-    showToast('Stopped', 'success');
-    if (botType === 'emby') openEmbyBotModal();
-    else if (botType === 'jellyfin') openJellyfinBotModal();
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
 // ==================== Chrome Bot Modal ====================
 async function openChromeBotModal() {
   const prevModal = state.previousModal; // Preserve for refresh
@@ -4541,233 +3674,6 @@ async function stopChromeSession(channelId) {
     state.previousModal = prevModal;
   } catch (error) {
     showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-// ==================== IPTV Bot Modal ====================
-async function openIPTVBotModal() {
-  const prevModal = state.previousModal; // Preserve for refresh
-  const overlay = document.getElementById('modalOverlay');
-  const modal = document.getElementById('modalContent');
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2>IPTV Bot</h2>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body" style="max-height: 500px; overflow-y: auto;">
-      <div id="iptvBotContent">Loading...</div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModal()">Close</button>
-    </div>
-  `;
-
-  overlay.classList.add('active');
-  if (prevModal) state.previousModal = prevModal; // Restore for navigation
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/status`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    renderIPTVBotContent(data);
-  } catch (error) {
-    document.getElementById('iptvBotContent').innerHTML = `<p style="color: var(--danger);">Failed to load: ${error.message}</p>`;
-  }
-}
-
-function renderIPTVBotContent(data) {
-  const { enabled, configured, channelCount, groupCount, hasEPG, activeStreams, scheduledRecordingsCount } = data;
-  document.getElementById('iptvBotContent').innerHTML = `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Bot Status</h3>
-      <div style="display: flex; align-items: center; gap: 16px; margin-top: 12px;">
-        <span style="color: ${enabled ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">${enabled ? 'Enabled' : 'Disabled'}</span>
-        <span style="color: ${configured ? 'var(--success)' : 'var(--text-muted)'};">${configured ? `${channelCount} channels` : 'Not Configured'}</span>
-        <button class="btn-${enabled ? 'danger' : 'primary'}" onclick="toggleIPTVBot(${!enabled})">${enabled ? 'Disable' : 'Enable'}</button>
-      </div>
-    </div>
-
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Configure IPTV</h3>
-      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-        <div>
-          <label style="display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">M3U/M3U8 Playlist File</label>
-          <input type="file" id="iptvPlaylistFile" accept=".m3u,.m3u8" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary); width: 100%;">
-          <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Upload your M3U/M3U8 playlist file</p>
-        </div>
-        <div>
-          <label style="display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">EPG/XMLTV URL (optional)</label>
-          <input type="text" id="iptvEpgUrl" placeholder="https://example.com/epg.xml" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary); width: 100%;">
-        </div>
-        <button class="btn-primary" onclick="configureIPTV()">Load Playlist</button>
-      </div>
-    </div>
-
-    ${enabled && configured ? `
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Watch TV</h3>
-      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
-        <select id="iptvVoiceChannel" style="padding: 8px; background: var(--bg-medium); border: 2px solid var(--bg-light); border-radius: var(--radius-sm); color: var(--text-primary);">
-          ${state.channels.filter(c => c.type === 'voice' || c.type === 'video').map(c => `<option value="${c._id}">${escapeHtml(c.name)}</option>`).join('')}
-        </select>
-        <button class="btn-secondary" onclick="loadIPTVChannels()">Load Channel Guide</button>
-        <div id="iptvChannelList" style="max-height: 200px; overflow-y: auto;"></div>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <h3>Active Streams (${activeStreams?.length || 0})</h3>
-      <div style="margin-top: 12px;">
-        ${activeStreams?.length > 0 ? activeStreams.map(s => `
-          <div style="display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px;">
-            <div style="flex: 1;">
-              <div style="font-weight: 500;">${escapeHtml(s.iptvChannel)}</div>
-              ${s.currentProgram ? `<div style="font-size: 12px; color: var(--text-muted);">Now: ${escapeHtml(s.currentProgram)}</div>` : ''}
-            </div>
-            <button class="btn-danger" onclick="stopIPTV('${s.channelId}')" style="padding: 6px 12px;">Stop</button>
-          </div>
-        `).join('') : '<p style="color: var(--text-muted);">No active streams</p>'}
-      </div>
-    </div>
-
-    <div class="settings-section" style="margin-top: 16px;">
-      <h3>Scheduled Recordings (${scheduledRecordingsCount || 0})</h3>
-      <button class="btn-secondary" onclick="loadIPTVRecordings()" style="margin-top: 8px;">View Recordings</button>
-      <div id="iptvRecordings" style="margin-top: 12px;"></div>
-    </div>
-    ` : ''}
-  `;
-}
-
-async function toggleIPTVBot(enabled) {
-  const prevModal = state.previousModal;
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/enable`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ enabled })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast(result.message, 'success');
-    openIPTVBotModal();
-    state.previousModal = prevModal;
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function configureIPTV() {
-  const fileInput = document.getElementById('iptvPlaylistFile');
-  const epgUrl = document.getElementById('iptvEpgUrl').value.trim();
-
-  if (!fileInput.files || fileInput.files.length === 0) {
-    showToast('Please select an M3U playlist file', 'error');
-    return;
-  }
-
-  const file = fileInput.files[0];
-  const formData = new FormData();
-  formData.append('playlist', file);
-  if (epgUrl) {
-    formData.append('epgUrl', epgUrl);
-  }
-
-  const prevModal = state.previousModal;
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/configure`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${state.token}` },
-      body: formData
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast(`Loaded ${result.channelCount} channels`, 'success');
-    openIPTVBotModal();
-    state.previousModal = prevModal;
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function loadIPTVChannels() {
-  const listDiv = document.getElementById('iptvChannelList');
-  listDiv.innerHTML = 'Loading...';
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/channels`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    listDiv.innerHTML = data.channels?.length > 0 ? data.channels.slice(0, 50).map(ch => `
-      <div style="display: flex; align-items: center; gap: 12px; padding: 8px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 4px;">
-        ${ch.logo ? `<img src="${ch.logo}" style="width: 32px; height: 32px; border-radius: 4px; object-fit: cover;">` : ''}
-        <div style="flex: 1;"><div style="font-weight: 500;">${escapeHtml(ch.name)}</div><div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(ch.group)}</div></div>
-        <button class="btn-primary" onclick="playIPTV('${ch.id}')" style="padding: 4px 8px; font-size: 12px;">Watch</button>
-      </div>
-    `).join('') : '<p style="color: var(--text-muted);">No channels</p>';
-  } catch (error) {
-    listDiv.innerHTML = `<span style="color: var(--danger);">${error.message}</span>`;
-  }
-}
-
-async function playIPTV(iptvChannelId) {
-  const voiceChannelId = document.getElementById('iptvVoiceChannel').value;
-  const prevModal = state.previousModal;
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/play`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ voiceChannelId, iptvChannelId })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    showToast(`Now watching: ${result.channel}`, 'success');
-    openIPTVBotModal();
-    state.previousModal = prevModal;
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function stopIPTV(voiceChannelId) {
-  const prevModal = state.previousModal;
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/stop`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ voiceChannelId })
-    });
-    if (!response.ok) throw new Error((await response.json()).error);
-    showToast('Stopped', 'success');
-    openIPTVBotModal();
-    state.previousModal = prevModal;
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function loadIPTVRecordings() {
-  const div = document.getElementById('iptvRecordings');
-  div.innerHTML = 'Loading...';
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/iptv-bot/recordings`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    const all = [...(data.scheduled || []), ...(data.recordings || [])];
-    div.innerHTML = all.length > 0 ? all.map(r => `
-      <div style="padding: 8px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 4px;">
-        <div style="font-weight: 500;">${escapeHtml(r.programTitle)}</div>
-        <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(r.channelName)} • ${r.status}</div>
-      </div>
-    `).join('') : '<p style="color: var(--text-muted);">No recordings</p>';
-  } catch (error) {
-    div.innerHTML = `<span style="color: var(--danger);">${error.message}</span>`;
   }
 }
 
@@ -5421,22 +4327,22 @@ async function openUserBotModal(botType) {
 
   switch (botType) {
     case 'youtube':
-      openYouTubeBotModal();
+      youtube.open();
       break;
     case 'twitch':
       openTwitchBotModal();
       break;
     case 'iptv':
-      openIPTVBotModal();
+      iptv.open();
       break;
     case 'plex':
-      openPlexBotModal();
+      mediaBots.open('plex');
       break;
     case 'jellyfin':
-      openJellyfinBotModal();
+      mediaBots.open('jellyfin');
       break;
     case 'emby':
-      openEmbyBotModal();
+      mediaBots.open('emby');
       break;
     case 'chrome':
       openChromeBotModal();
@@ -5452,22 +4358,22 @@ function openAdminBotModal(botType) {
 
   switch (botType) {
     case 'youtube':
-      openYouTubeBotModal();
+      youtube.open();
       break;
     case 'twitch':
       openTwitchBotModal();
       break;
     case 'iptv':
-      openIPTVBotModal();
+      iptv.open();
       break;
     case 'plex':
-      openPlexBotModal();
+      mediaBots.open('plex');
       break;
     case 'jellyfin':
-      openJellyfinBotModal();
+      mediaBots.open('jellyfin');
       break;
     case 'emby':
-      openEmbyBotModal();
+      mediaBots.open('emby');
       break;
     case 'chrome':
       openChromeBotModal();

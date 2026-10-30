@@ -23,7 +23,8 @@ data; `F7LANS_*` environment variables still work as fallbacks for `EMBERLAN_*`.
 
 - Works today: accounts (local and Google sign-in), text channels, E2E encrypted DMs, voice
   channels with audio, camera video and screen share (WebRTC, peer to peer), admin settings,
-  media bot configuration, federation setup, and Game Together: play a host's local-multiplayer
+  media bots (YouTube, Plex, Jellyfin, Emby, IPTV; see [docs/bots.md](docs/bots.md)), federation
+  setup, and Game Together: play a host's local-multiplayer
   game from a controller or phone touch pad ([docs/game-together.md](docs/game-together.md)).
   Hosting needs the Windows app and the ViGEmBus driver. The pipeline is proven in the harness;
   it has not yet been played with a real driver and game.
@@ -43,6 +44,10 @@ What comes next is in [ROADMAP.md](ROADMAP.md); changes are in [CHANGELOG.md](CH
 Captured from the running app by the conformance harness (`node conformance/run.js --screenshots`).
 
 ![Web client, #general channel](docs/screenshots/desktop-chat.png)
+
+![Plex search in the bot dialog, as a regular user](docs/screenshots/desktop-bots.png)
+
+![A Plex movie playing in the voice channel](docs/screenshots/desktop-bots-playing.png)
 
 ![Game Together on a phone: touch pad over the host's streamed game](docs/screenshots/android-touchpad.png)
 
@@ -157,7 +162,7 @@ reach a plain-HTTP server on your LAN.
 
 ## Conformance
 
-<!-- conformance -->**220/220** checks passing<!-- /conformance -->
+<!-- conformance -->**240/240** checks passing<!-- /conformance -->
 
 ```bash
 npm install

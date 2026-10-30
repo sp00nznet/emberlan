@@ -40,6 +40,7 @@ app.use(helmet({
     directives: {
       scriptSrc: ["'self'"],
       scriptSrcAttr: ["'unsafe-inline'"],
+      workerSrc: ["'self'", 'blob:'], // hls.js and mpegts.js decode in a blob: worker
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
       imgSrc: ["'self'", 'data:', 'blob:', 'https:', 'http:'],
@@ -117,14 +118,16 @@ let federationService = null;
 // YouTube bot service
 let youtubeBotService = null;
 
-// Plex bot service
-let plexBotService = null;
 
 // Database and server startup
 const startServer = async () => {
   try {
     // Connect to MongoDB
     await connectDB();
+
+    // Nobody is in voice when the server starts: sockets don't survive a restart, so any
+    // voice members left in the database are ghosts that new callers would try to call.
+    await Channel.updateMany({ 'currentUsers.0': { $exists: true } }, { $set: { currentUsers: [] } });
 
     // Create default admin if not exists
     const adminExists = await User.findOne({ role: 'superadmin' });
@@ -193,41 +196,9 @@ const startServer = async () => {
       console.error('YouTube bot service failed to initialize:', err.message);
     }
 
-    // Initialize Plex bot service
-    try {
-      const { PlexBotService } = require('./services/plexBotService');
-      const plexBotController = require('./controllers/plexBotController');
-      plexBotService = new PlexBotService(io);
-      plexBotController.initialize(plexBotService);
-      botRegistry.register('plex', plexBotService);
-      console.log('Plex bot service initialized');
-    } catch (err) {
-      console.error('Plex bot service failed to initialize:', err.message);
-    }
-
-    // Initialize Emby bot service
-    try {
-      const { EmbyBotService } = require('./services/embyBotService');
-      const embyBotController = require('./controllers/embyBotController');
-      const embyBotService = new EmbyBotService(io);
-      embyBotController.initialize(embyBotService);
-      botRegistry.register('emby', embyBotService);
-      console.log('Emby bot service initialized');
-    } catch (err) {
-      console.error('Emby bot service failed to initialize:', err.message);
-    }
-
-    // Initialize Jellyfin bot service
-    try {
-      const { JellyfinBotService } = require('./services/jellyfinBotService');
-      const jellyfinBotController = require('./controllers/jellyfinBotController');
-      const jellyfinBotService = new JellyfinBotService(io);
-      jellyfinBotController.initialize(jellyfinBotService);
-      botRegistry.register('jellyfin', jellyfinBotService);
-      console.log('Jellyfin bot service initialized');
-    } catch (err) {
-      console.error('Jellyfin bot service failed to initialize:', err.message);
-    }
+    // Plex, Jellyfin and Emby: one service, three adapters (services/mediaServerBot.js)
+    const { MediaServerBot } = require('./services/mediaServerBot');
+    for (const type of ['plex', 'jellyfin', 'emby']) botRegistry.register(type, new MediaServerBot(io, type));
 
     // Initialize Chrome bot service
     try {

@@ -16,12 +16,10 @@ Documentation for the media bots configured in Settings > Media Bots.
 ## Table of Contents
 
 - [Overview](#overview)
-- [Streaming Bots](#streaming-bots)
-  - [YouTube Bot](#youtube-bot)
-  - [Plex Bot](#plex-bot)
-  - [Emby Bot](#emby-bot)
-  - [Jellyfin Bot](#jellyfin-bot)
-  - [IPTV Bot](#iptv-bot)
+- [Media bots](#media-bots)
+  - [YouTube](#youtube)
+  - [Plex, Jellyfin, Emby](#plex-jellyfin-emby)
+  - [IPTV](#iptv)
   - [Twitch Bot](#twitch-bot)
 - [Utility Bots](#utility-bots)
   - [Chrome Bot](#chrome-bot)
@@ -34,168 +32,98 @@ Documentation for the media bots configured in Settings > Media Bots.
 
 ## Overview
 
-Settings > Media Bots configures these bots. The server also has routes for an image search bot and a Star Citizen bot that the UI no longer exposes.
+Bots play media to everyone in a voice channel. They don't send it over the voice call. When a
+bot starts, the server tells everyone in that voice channel (`youtube:playing`, `media:playing`,
+`iptv:playing`), and each client plays the stream in its video grid. Someone who joins the
+channel later is sent what is playing.
 
-Bots do not send media over the voice call. When a bot starts playing, the
-server tells everyone in the channel (`youtube:playing`, `media:playing`, `iptv:playing`,
-`twitch:started`) and each client opens the stream itself in the video grid, directly or through
-the server's `/api/stream/proxy`.
+| Category | Bots |
+|:---------|:-----|
+| **Media** | YouTube, Plex, Jellyfin, Emby, IPTV (all checked end to end by the conformance harness) |
+| **Other** | Chrome (a shared web page), Twitch (see their sections), Game Together |
 
-| Category | Bots | Count |
-|:---------|:-----|:-----:|
-| **Streaming** | YouTube, Plex, Emby, Jellyfin, IPTV, Twitch | 6 |
-| **Utility** | Chrome | 1 |
-| **Gaming** | Game Together | 1 |
-| **Total** | | **8** |
+### Who can do what
 
-### How Bots Work
+| Action | Who |
+|---|---|
+| Turn a bot on or off, connect a media server, load an IPTV playlist | admins |
+| See a bot's status, search, browse channels | any logged-in user (status never contains keys) |
+| Play or stop in a voice channel | anyone **in that voice channel**, and admins |
 
-1. **Admin enables** the bot globally in admin settings
-2. **Admin configures** any required API keys or connections
-3. **Admin grants** bot permission to user groups
-4. **Optionally**, admin can enable/disable bots per channel
-5. **Users** with permission can use the bot in enabled channels
+Open a bot from **Bots** in the voice panel. Admins see the setup at the top of the same dialog.
 
----
+### The stream proxy and your keys
 
-## Streaming Bots
-
-### YouTube Bot
-
-Stream YouTube videos to voice channels for watch parties.
-
-**Admin Setup:**
-1. Go to **Settings** → **Administration** → **Media Bots** → **YouTube**
-2. Enable the bot
-3. No additional configuration required
-
-**User Features:**
-- Paste any YouTube URL to play
-- Preview video info (title, thumbnail, duration) before playing
-- See currently playing video
-- Stop playback
-- Multiple streams in different channels simultaneously
-
-**How It Works:**
-- Uses `ytdl-core` to extract stream URLs
-- Every participant's client plays the video itself
-- Supports videos, playlists (first video), and shorts
+Plex tokens, Jellyfin/Emby API keys and IPTV account details live in stream URLs, so they never
+reach clients:
+- Streams and thumbnails are sent as `/api/stream/proxy?u=<sealed>` links.
+- The upstream URL is encrypted inside the link with a key the server makes at startup.
+- The proxy only fetches links the server issued, so it can't be used to reach other machines on
+  the server's network.
+- Byte ranges pass through, so seeking works. HLS playlists are rewritten so their segments,
+  keys and variants go through the proxy too.
+- Links stop working after a server restart; playing again issues new ones.
 
 ---
 
-### Plex Bot
+## Media bots
 
-Stream media from your Plex Media Server library.
+### YouTube
 
-**Admin Setup:**
-1. Go to **Settings** → **Administration** → **Media Bots** → **Plex**
-2. Enable the bot
-3. Enter your Plex server URL (e.g., `http://192.168.1.100:32400`)
-4. Enter your Plex authentication token
+Paste any YouTube link (watch, youtu.be, Shorts, live, mobile or music links). Everyone in the
+voice channel gets the official YouTube player for that video. The server only checks the link
+and fetches the title and thumbnail from YouTube's oEmbed endpoint; if that fails, the video still
+plays. The desktop app sends a Referer to YouTube embeds, which they need when the page is a local
+file.
 
-**Getting Your Plex Token:**
-1. Sign in to Plex web app
-2. Open any media item
-3. Open browser developer tools (F12)
-4. Go to Network tab
-5. Look for `X-Plex-Token` in any request
+### Plex, Jellyfin, Emby
 
-**User Features:**
-- Search your entire Plex library
-- Play movies, TV shows, music
-- See what's currently playing
-- Queue system for music
+**Setup (admin):** enter the server URL and a credential, then **Turn on**.
+- **Plex:** a Plex token (`X-Plex-Token`).
+- **Jellyfin and Emby:** an API key from the server's dashboard.
 
----
+A wrong key is rejected when you connect. Settings are saved. If the media server is down when
+Emberlan starts, the settings are kept and the bot reconnects on the next search or play.
 
-### Emby Bot
+**Playing:** search, then **Play**. Movies, episodes, music videos and tracks are listed. Shows and
+albums are not; search for the episode or track.
 
-Stream media from Emby Media Server.
+| Server | Video | Music |
+|---|---|---|
+| Plex | the file itself if browsers can play it (mp4, webm), otherwise Plex's HLS transcode | the file |
+| Jellyfin, Emby | the server's HLS transcode (H.264 + AAC) | MP3 |
 
-**Admin Setup:**
-1. Go to **Settings** → **Administration** → **Media Bots** → **Emby**
-2. Enable the bot
-3. Enter Emby server URL (e.g., `http://192.168.1.100:8096`)
-4. Enter API key (create in Emby: **Dashboard** → **API Keys**)
+All three share one service, `server/services/mediaServerBot.js`, with a small adapter per
+server.
 
-**User Features:**
-- Search movies, series, music
-- Thumbnail previews
-- Playback in voice channels
-- Episode selection for TV series
+### IPTV
 
----
+**Setup (admin):** load an M3U playlist from a URL or upload an `.m3u` file. You can also add an
+XMLTV guide URL, then **Turn on**.
+- `#EXTINF` attributes are read in any order: `tvg-id`, `tvg-name`, `tvg-logo`, `group-title`.
+- The guide's times respect their timezone offsets.
+- The channel list and guide are saved; the guide is reloaded at startup.
 
-### Jellyfin Bot
-
-Stream media from Jellyfin (free, open-source Plex/Emby alternative).
-
-**Admin Setup:**
-1. Go to **Settings** → **Administration** → **Media Bots** → **Jellyfin**
-2. Enable the bot
-3. Enter Jellyfin server URL
-4. Enter API key (create in Jellyfin: **Dashboard** → **API Keys**)
-
-**User Features:**
-- Same features as Emby Bot
-- Full Jellyfin API support
-
-**Why this replaces "The Projectionist" (movie nights):**
-
-Movie nights used to run through a Discord user account ("the projectionist") left
-logged in on a VM, screen-sharing Kodi into a voice channel, with Kodi's web remote
-port-forwarded on the home router so friends could control it. That setup was fragile
-and exposed:
-
-- Discord bots can't stream video into voice, so it needed a real user account kept
-  logged in. Automating that account is a selfbot, which breaks Discord's ToS.
-- Any logout, dropped screen share or VM hiccup meant someone had to go fix it.
-- Kodi's web UI was open to the internet through router port forwards.
-- Everyone watched a recompressed screen share instead of the actual file.
-
-On Emberlan we run our own server, so the Jellyfin bot can play into voice channels
-legitimately: no babysat account, every friend gets the real stream, and the whole
-thing is reachable only over Tailscale (no router ports). Close the old Kodi port
-forwards and retire the projectionist VM once this is running.
-
----
-
-### IPTV Bot
-
-Watch live TV together with electronic program guide (EPG).
-
-**Admin Setup:**
-1. Go to **Settings** → **Administration** → **Media Bots** → **IPTV**
-2. Enable the bot
-3. Enter M3U playlist URL from your IPTV provider
-4. Optionally enter XMLTV EPG URL for TV guide data
-
-**M3U Playlist Format:**
 ```
 #EXTM3U
-#EXTINF:-1 tvg-id="cnn" tvg-logo="logo.png" group-title="News",CNN
-http://stream-url.com/cnn
-#EXTINF:-1 tvg-id="espn" group-title="Sports",ESPN
-http://stream-url.com/espn
+#EXTINF:-1 tvg-id="news.example" tvg-logo="http://example/logo.png" group-title="News",Example News
+http://provider.example/live/user/pass/1.m3u8
 ```
 
-**User Features:**
-- Browse channels by group/category
-- View TV guide (current and upcoming shows)
-- Watch live channels in voice
-- Change channels easily
-- Schedule recordings
-- Tag users on recordings
+**Watching:** pick a group, filter by name, then **Watch**. The current program from the guide is
+shown.
+- **Format detection:** the server checks what the stream is when you press Watch. An HLS playlist
+  plays through hls.js whatever its URL looks like; raw MPEG-TS plays through mpegts.js.
+- **Dead channels:** a channel that doesn't answer gives an error instead of a black tile.
+- **Privacy:** channel URLs, which usually include the provider account, never leave the server.
 
-**Recording System:**
-- Select a program from the EPG to record
-- Recordings are tied to your account
-- Tag other users to notify them
-- View scheduled and completed recordings
-
----
+Recordings were listed in the old UI but never recorded anything, and have been removed.
 
 ### Twitch Bot
+
+> **Not working, not covered by the harness.** Starting a stream fails: the client sends `streamer`
+> and the server reads `username`. The player also needs the page's hostname, which the desktop and
+> Android apps don't have. Low priority; see [ROADMAP.md](../ROADMAP.md).
 
 Watch Twitch streams together with embedded player.
 
@@ -217,6 +145,10 @@ Watch Twitch streams together with embedded player.
 ## Utility Bots
 
 ### Chrome Bot
+
+> **Not a browser.** It shows a web page in a frame for everyone in the channel. Most sites refuse to
+> be framed, and the web client's security policy only allows YouTube and Twitch frames, so in the
+> browser it rarely loads anything. Not covered by the harness; see [ROADMAP.md](../ROADMAP.md).
 
 Shared browser sessions for collaborative browsing.
 
@@ -351,10 +283,11 @@ Common patterns:
 
 ### Streaming Issues
 
-1. Verify server has sufficient bandwidth
-2. Check media server is accessible
-3. Try lower quality preset
+- **"Could not reach Plex/Jellyfin/Emby"**: the Emberlan server can't reach the media server URL.
+  It is the Emberlan server that connects, not your browser.
+- **"<channel> is not reachable"** (IPTV): the provider refused or timed out; check the account.
+- **A tile stays black**: open the browser console. HLS errors are logged as `[bot stream]`.
 
 ---
 
-Have questions? [Open an issue](https://github.com/yourusername/emberlan/issues)!
+Have questions? [Open an issue](https://github.com/sp00nznet/emberlan/issues)!

@@ -10,14 +10,12 @@ const channelController = require('../controllers/channelController');
 const userController = require('../controllers/userController');
 const federationController = require('../controllers/federationController');
 const youtubeBotController = require('../controllers/youtubeBotController');
-const plexBotController = require('../controllers/plexBotController');
-const embyBotController = require('../controllers/embyBotController');
-const jellyfinBotController = require('../controllers/jellyfinBotController');
+const { createMediaServerBotController } = require('../controllers/mediaServerBotController');
+const botRegistry = require('../services/botRegistry');
 const chromeBotController = require('../controllers/chromeBotController');
 const iptvBotController = require('../controllers/iptvBotController');
 const groupController = require('../controllers/groupController');
 const fileShareController = require('../controllers/fileShareController');
-const activityController = require('../controllers/activityController');
 const socialAccountsController = require('../controllers/socialAccountsController');
 const steamAuthController = require('../controllers/steamAuthController');
 const serverSettingsController = require('../controllers/serverSettingsController');
@@ -25,8 +23,6 @@ const twoFactorController = require('../controllers/twoFactorController');
 const attachmentController = require('../controllers/attachmentController');
 const googleAuthController = require('../controllers/googleAuthController');
 const twitchBotController = require('../controllers/twitchBotController');
-const imageSearchBotController = require('../controllers/imageSearchBotController');
-const starCitizenBotController = require('../controllers/starCitizenBotController');
 const gameTogetherController = require('../controllers/gameTogetherController');
 
 const router = express.Router();
@@ -83,20 +79,9 @@ const serverIconUpload = multer({
   }
 });
 
-// IPTV playlist upload config
-const iptvPlaylistStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = path.join(__dirname, '../uploads/iptv');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, `playlist-${Date.now()}.m3u`);
-  }
-});
-
+// IPTV playlist upload: parsed in memory, the channels are saved (nothing kept on disk).
 const iptvPlaylistUpload = multer({
-  storage: iptvPlaylistStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB for large playlists
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
@@ -187,40 +172,24 @@ router.post('/federation/servers/:serverId/disconnect', authenticate, adminOnly,
 router.delete('/federation/servers/:serverId', authenticate, adminOnly, federationController.removeFederation);
 
 // ===== YouTube Bot Routes =====
-router.get('/admin/youtube-bot/status', authenticate, adminOnly, youtubeBotController.getStatus);
+router.get('/admin/youtube-bot/status', authenticate, youtubeBotController.getStatus);
 router.post('/admin/youtube-bot/enable', authenticate, adminOnly, youtubeBotController.setEnabled);
-router.post('/admin/youtube-bot/play', authenticate, adminOnly, youtubeBotController.play);
-router.post('/admin/youtube-bot/stop', authenticate, adminOnly, youtubeBotController.stop);
-router.get('/admin/youtube-bot/video-info', authenticate, adminOnly, youtubeBotController.getVideoInfo);
-router.get('/admin/youtube-bot/stream-url', authenticate, youtubeBotController.getStreamUrl);
+router.get('/admin/youtube-bot/video-info', authenticate, youtubeBotController.getVideoInfo);
+router.post('/admin/youtube-bot/play', authenticate, youtubeBotController.play);
+router.post('/admin/youtube-bot/stop', authenticate, youtubeBotController.stop);
 
-// ===== Plex Bot Routes =====
-router.get('/admin/plex-bot/status', authenticate, adminOnly, plexBotController.getStatus);
-router.post('/admin/plex-bot/enable', authenticate, adminOnly, plexBotController.setEnabled);
-router.post('/admin/plex-bot/connect', authenticate, adminOnly, plexBotController.connect);
-router.post('/admin/plex-bot/disconnect', authenticate, adminOnly, plexBotController.disconnect);
-router.get('/admin/plex-bot/search', authenticate, adminOnly, plexBotController.search);
-router.post('/admin/plex-bot/play', authenticate, adminOnly, plexBotController.play);
-router.post('/admin/plex-bot/stop', authenticate, adminOnly, plexBotController.stop);
-router.get('/admin/plex-bot/thumb', authenticate, plexBotController.getThumb);
-
-// ===== Emby Bot Routes =====
-router.get('/admin/emby-bot/status', authenticate, adminOnly, embyBotController.getStatus);
-router.post('/admin/emby-bot/enable', authenticate, adminOnly, embyBotController.setEnabled);
-router.post('/admin/emby-bot/connect', authenticate, adminOnly, embyBotController.connect);
-router.post('/admin/emby-bot/disconnect', authenticate, adminOnly, embyBotController.disconnect);
-router.get('/admin/emby-bot/search', authenticate, adminOnly, embyBotController.search);
-router.post('/admin/emby-bot/play', authenticate, adminOnly, embyBotController.play);
-router.post('/admin/emby-bot/stop', authenticate, adminOnly, embyBotController.stop);
-
-// ===== Jellyfin Bot Routes =====
-router.get('/admin/jellyfin-bot/status', authenticate, adminOnly, jellyfinBotController.getStatus);
-router.post('/admin/jellyfin-bot/enable', authenticate, adminOnly, jellyfinBotController.setEnabled);
-router.post('/admin/jellyfin-bot/connect', authenticate, adminOnly, jellyfinBotController.connect);
-router.post('/admin/jellyfin-bot/disconnect', authenticate, adminOnly, jellyfinBotController.disconnect);
-router.get('/admin/jellyfin-bot/search', authenticate, adminOnly, jellyfinBotController.search);
-router.post('/admin/jellyfin-bot/play', authenticate, adminOnly, jellyfinBotController.play);
-router.post('/admin/jellyfin-bot/stop', authenticate, adminOnly, jellyfinBotController.stop);
+// ===== Plex / Jellyfin / Emby (services/mediaServerBot.js) =====
+// Admins set them up; any logged-in user can see the status (no secrets in it) and search;
+// playing and stopping need you in that voice channel (or admin).
+const mediaBot = createMediaServerBotController((req) => botRegistry.get(req.params.bot));
+const MB = '/admin/:bot(plex|jellyfin|emby)-bot';
+router.get(`${MB}/status`, authenticate, mediaBot.getStatus);
+router.post(`${MB}/enable`, authenticate, adminOnly, mediaBot.setEnabled);
+router.post(`${MB}/connect`, authenticate, adminOnly, mediaBot.connect);
+router.post(`${MB}/disconnect`, authenticate, adminOnly, mediaBot.disconnect);
+router.get(`${MB}/search`, authenticate, mediaBot.search);
+router.post(`${MB}/play`, authenticate, mediaBot.play);
+router.post(`${MB}/stop`, authenticate, mediaBot.stop);
 
 // ===== Chrome Bot Routes =====
 router.get('/admin/chrome-bot/status', authenticate, adminOnly, chromeBotController.getStatus);
@@ -238,90 +207,48 @@ router.post('/admin/chrome-bot/join', authenticate, chromeBotController.joinSess
 router.post('/admin/chrome-bot/transfer', authenticate, chromeBotController.transferControl);
 
 // ===== IPTV Bot Routes =====
-router.get('/admin/iptv-bot/status', authenticate, adminOnly, iptvBotController.getStatus);
+// Admins set it up; anyone logged in can browse; play/stop need you in that voice channel (or admin).
+router.get('/admin/iptv-bot/status', authenticate, iptvBotController.getStatus);
 router.post('/admin/iptv-bot/enable', authenticate, adminOnly, iptvBotController.setEnabled);
 router.post('/admin/iptv-bot/configure', authenticate, adminOnly, iptvPlaylistUpload.single('playlist'), iptvBotController.configure);
 router.get('/admin/iptv-bot/channels', authenticate, iptvBotController.getChannels);
 router.get('/admin/iptv-bot/groups', authenticate, iptvBotController.getGroups);
 router.get('/admin/iptv-bot/epg/:channelId', authenticate, iptvBotController.getEPG);
 router.post('/admin/iptv-bot/play', authenticate, iptvBotController.play);
-router.post('/admin/iptv-bot/change-channel', authenticate, iptvBotController.changeChannel);
+router.post('/admin/iptv-bot/change-channel', authenticate, iptvBotController.play);
 router.post('/admin/iptv-bot/stop', authenticate, iptvBotController.stop);
-router.post('/admin/iptv-bot/recordings', authenticate, iptvBotController.scheduleRecording);
-router.get('/admin/iptv-bot/recordings', authenticate, iptvBotController.getRecordings);
-router.delete('/admin/iptv-bot/recordings/:recordingId', authenticate, iptvBotController.cancelRecording);
-router.post('/admin/iptv-bot/recordings/:recordingId/tag', authenticate, iptvBotController.tagUser);
 
-// IPTV Stream Proxy - bypasses CORS for browser playback
-// Note: No auth required since hls.js segment requests don't include headers
+// Media bot stream proxy (CORS-free playback). Only links the server issued: see services/streamProxy.js.
+const streamProxy = require('../services/streamProxy');
 router.get('/stream/proxy', async (req, res) => {
-  const { url } = req.query;
-  console.log(`[StreamProxy] Request for: ${url ? url.substring(0, 100) : 'NO URL'}`);
-
-  if (!url) {
-    return res.status(400).json({ error: 'URL required' });
-  }
-
+  const url = streamProxy.open(req.query.u);
+  if (!url) return res.status(403).json({ error: 'Invalid or expired stream link' });
   try {
     const fetch = (await import('node-fetch')).default;
-    console.log(`[StreamProxy] Fetching: ${url.substring(0, 100)}...`);
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Emberlan/1.0'
-      }
+    const controller = new AbortController();
+    res.on('close', () => controller.abort());
+    const upstream = await fetch(url, {
+      headers: { 'User-Agent': 'Emberlan/1.0', ...(req.headers.range && { Range: req.headers.range }) },
+      signal: controller.signal,
     });
+    if (!upstream.ok) return res.status(upstream.status).json({ error: `Upstream returned ${upstream.status}` });
 
-    console.log(`[StreamProxy] Response status: ${response.status}, content-type: ${response.headers.get('content-type')}`);
-
-    if (!response.ok) {
-      console.error(`[StreamProxy] Fetch failed: ${response.status} for ${url}`);
-      return res.status(response.status).json({ error: 'Stream fetch failed' });
+    const type = upstream.headers.get('content-type') || '';
+    if (/mpegurl/i.test(type) || /\.m3u8(\?|$)/i.test(new URL(url).pathname + new URL(url).search)) {
+      res.type('application/vnd.apple.mpegurl').send(streamProxy.rewriteManifest(await upstream.text(), upstream.url || url));
+      return;
     }
-
-    // Set CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', '*');
-
-    const contentType = response.headers.get('content-type') || '';
-    const isM3U8 = url.includes('.m3u8') || contentType.includes('mpegurl') || contentType.includes('x-mpegURL');
-
-    if (isM3U8) {
-      // For HLS manifests, rewrite URLs to go through proxy
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-
-      let content = await response.text();
-      const baseUrl = new URL(url);
-      const basePath = url.substring(0, url.lastIndexOf('/') + 1);
-
-      // Rewrite relative and absolute URLs in the manifest
-      content = content.split('\n').map(line => {
-        line = line.trim();
-        if (line && !line.startsWith('#')) {
-          // This is a URL line
-          let segmentUrl;
-          if (line.startsWith('http://') || line.startsWith('https://')) {
-            segmentUrl = line;
-          } else if (line.startsWith('/')) {
-            segmentUrl = `${baseUrl.protocol}//${baseUrl.host}${line}`;
-          } else {
-            segmentUrl = basePath + line;
-          }
-          return `/api/stream/proxy?url=${encodeURIComponent(segmentUrl)}`;
-        }
-        return line;
-      }).join('\n');
-
-      res.send(content);
-    } else {
-      // For segments and other content, pipe through
-      if (contentType) {
-        res.setHeader('Content-Type', contentType);
-      }
-      response.body.pipe(res);
+    // Pass through what seeking needs (206, ranges, length).
+    res.status(upstream.status);
+    for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+      const v = upstream.headers.get(h);
+      if (v) res.setHeader(h, v);
     }
+    upstream.body.on('error', () => res.destroy());
+    upstream.body.pipe(res);
   } catch (error) {
-    console.error('[StreamProxy] Error:', error.message);
-    res.status(500).json({ error: 'Stream proxy error: ' + error.message });
+    if (error.name === 'AbortError') return;
+    if (!res.headersSent) res.status(502).json({ error: 'Stream proxy error: ' + error.message });
   }
 });
 
@@ -335,29 +262,6 @@ router.post('/admin/twitch-bot/play', authenticate, twitchBotController.play);
 router.post('/admin/twitch-bot/stop', authenticate, twitchBotController.stop);
 router.get('/admin/twitch-bot/embed/:username', authenticate, twitchBotController.getEmbedUrl);
 router.get('/admin/twitch-bot/channel/:channelId', authenticate, twitchBotController.getActiveStream);
-
-// ===== Image Search Bot Routes =====
-router.get('/admin/image-bot/status', authenticate, adminOnly, imageSearchBotController.getStatus);
-router.post('/admin/image-bot/enable', authenticate, adminOnly, imageSearchBotController.setEnabled);
-router.post('/admin/image-bot/configure', authenticate, adminOnly, imageSearchBotController.configure);
-router.post('/admin/image-bot/safe-search', authenticate, adminOnly, imageSearchBotController.setSafeSearch);
-router.post('/admin/image-bot/search', authenticate, imageSearchBotController.search);
-router.post('/admin/image-bot/next', authenticate, imageSearchBotController.next);
-router.post('/admin/image-bot/random', authenticate, imageSearchBotController.random);
-router.get('/admin/image-bot/search-direct', authenticate, imageSearchBotController.searchDirect);
-
-// ===== Star Citizen Bot Routes =====
-router.get('/admin/sc-bot/status', authenticate, adminOnly, starCitizenBotController.getStatus);
-router.post('/admin/sc-bot/enable', authenticate, adminOnly, starCitizenBotController.setEnabled);
-router.post('/admin/sc-bot/monitor', authenticate, adminOnly, starCitizenBotController.startMonitoring);
-router.post('/admin/sc-bot/unmonitor', authenticate, adminOnly, starCitizenBotController.stopMonitoring);
-router.get('/admin/sc-bot/tip', authenticate, starCitizenBotController.getTip);
-router.post('/admin/sc-bot/tip', authenticate, starCitizenBotController.postTip);
-router.get('/admin/sc-bot/location/:location', authenticate, starCitizenBotController.getLocationInfo);
-router.get('/admin/sc-bot/server-status', authenticate, starCitizenBotController.getServerStatus);
-router.get('/admin/sc-bot/players/:channelId', authenticate, starCitizenBotController.getActivePlayers);
-router.put('/admin/sc-bot/channel/:channelId', authenticate, adminOnly, starCitizenBotController.updateChannelSettings);
-router.post('/admin/sc-bot/track-activity', authenticate, starCitizenBotController.trackActivity);
 
 // ===== Game Together Routes (Virtual Controller Emulation) =====
 router.get('/admin/game-together/status', authenticate, adminOnly, gameTogetherController.getStatus);
@@ -410,15 +314,6 @@ router.get('/file-share/users/:userId/folders', authenticate, requirePermission(
 router.get('/file-share/users/:userId/folders/:folderId/contents', authenticate, requirePermission('file-share'), fileShareController.getFolderContents);
 router.post('/file-share/users/:userId/folders/:folderId/download', authenticate, requirePermission('file-share'), fileShareController.requestDownload);
 
-// ===== Activity Routes =====
-router.post('/activity/start', authenticate, activityController.startActivity);
-router.post('/activity/end', authenticate, activityController.endActivity);
-router.get('/activity/current', authenticate, activityController.getCurrentActivity);
-router.get('/activity/stats', authenticate, activityController.getMyStats);
-router.get('/activity/history', authenticate, activityController.getMyHistory);
-router.get('/activity/users/:userId/stats', authenticate, activityController.getUserStats);
-router.get('/activity/users/:userId/common', authenticate, activityController.getCommonActivities);
-router.get('/admin/activity/stats', authenticate, adminOnly, activityController.getServerStats);
 
 // ===== Social Accounts Routes =====
 router.get('/social/accounts', authenticate, socialAccountsController.getLinkedAccounts);
