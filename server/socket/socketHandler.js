@@ -5,6 +5,7 @@ const Message = require('../models/Message');
 const DirectMessage = require('../models/DirectMessage');
 const { FederationServer, FederatedChannel } = require('../models/Federation');
 const { verifyAuthHeader } = require('../config/federation');
+const gameTogether = require('../controllers/gameTogetherController');
 
 // Connected users map
 const connectedUsers = new Map();
@@ -504,6 +505,7 @@ const handleUserConnection = async (io, socket) => {
           $pull: { currentUsers: { user: user._id } }
         });
         socket.leave(`voice:${currentVoice._id}`);
+        gameTogether.userLeftVoice(currentVoice._id, user._id);
         io.to(`voice:${currentVoice._id}`).emit('voice:userLeft', {
           userId: user._id,
           channelId: currentVoice._id
@@ -590,6 +592,7 @@ const handleUserConnection = async (io, socket) => {
         });
 
         socket.leave(`voice:${socket.voiceChannel}`);
+        gameTogether.userLeftVoice(socket.voiceChannel, user._id);
         socket.voiceChannel = null;
       }
     } catch (error) {
@@ -704,19 +707,6 @@ const handleUserConnection = async (io, socket) => {
     }
   });
 
-  // ===== Game Together Events =====
-  // Real-time controller input for game together sessions
-  socket.on('gameTogether:input', (data) => {
-    const { channelId, inputData } = data;
-    // Input is handled directly by the service
-    // This event is just for real-time acknowledgment
-    socket.emit('gameTogether:input-received', {
-      channelId,
-      userId: user._id,
-      timestamp: Date.now()
-    });
-  });
-
   // ===== Typing Indicators =====
   socket.on('typing:start', (channelId) => {
     socket.to(`channel:${channelId}`).emit('typing:started', {
@@ -760,6 +750,7 @@ const handleUserConnection = async (io, socket) => {
 
     // Clean up voice channel
     if (socket.voiceChannel) {
+      gameTogether.userLeftVoice(socket.voiceChannel, user._id);
       await Channel.findByIdAndUpdate(socket.voiceChannel, {
         $pull: { currentUsers: { user: user._id } }
       });

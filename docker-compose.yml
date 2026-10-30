@@ -47,12 +47,6 @@ services:
       STEAM_API_KEY: ${STEAM_API_KEY:-}
     volumes:
       - uploads_data:/app/server/uploads
-    # Device access for Game Together virtual controller emulation (uinput)
-    devices:
-      - /dev/uinput:/dev/uinput
-    # Grant SYS_ADMIN capability for uinput access
-    cap_add:
-      - SYS_ADMIN
     depends_on:
       mongodb:
         condition: service_healthy

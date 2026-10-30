@@ -659,6 +659,7 @@ function connectSocket() {
 
   // Voice/camera/screen media (voice-rtc.js).
   window.rtc.attach(state.socket);
+  window.gameTogether.attach(state.socket);
   window.rtc.onRemoteVideo = (peerId, stream, meta) => {
     const who = state.voiceNames?.[peerId] || 'Someone';
     const label = meta.kind === 'screen' ? `${who}: ${meta.label || 'Screen'}` : who;
@@ -738,40 +739,6 @@ function connectSocket() {
       for (const [id, st] of Object.entries(state.screenStreams)) window.rtc.addStream(st, { kind: 'screen', label: id });
     }
     renderVoiceUsers(data.users);
-  });
-
-  // ===== Game Together Event Handlers =====
-  state.socket.on('gameTogether:session-started', (data) => {
-    showToast(`🎮 Game Together session started by ${data.hostUsername}`, 'success');
-    console.log('[Game Together] Session started:', data);
-  });
-
-  state.socket.on('gameTogether:session-stopped', (data) => {
-    showToast('Game Together session ended', 'info');
-
-    // Clean up if we were in this session
-    if (state.gameTogether?.active) {
-      stopGameTogetherGamepadPolling();
-      state.gameTogether.active = false;
-      state.gameTogether.isHost = false;
-      state.gameTogether.hostUserId = null;
-      state.gameTogether.playerSlot = null;
-    }
-  });
-
-  state.socket.on('gameTogether:player-joined', (data) => {
-    showToast(`${data.username} joined as Player ${data.playerSlot}`, 'success');
-    console.log('[Game Together] Player joined:', data);
-  });
-
-  state.socket.on('gameTogether:player-left', (data) => {
-    showToast(`Player ${data.playerSlot} left the session`, 'info');
-    console.log('[Game Together] Player left:', data);
-  });
-
-  state.socket.on('gameTogether:input-received', (data) => {
-    // Input acknowledged by server (optional for debugging)
-    // console.log('[Game Together] Input received by server');
   });
 
   // YouTube bot events
@@ -1075,6 +1042,9 @@ function renderMainApp() {
         </button>
         <button class="action-btn primary" id="shareBtnPanel" onclick="toggleScreenShare()">
           <span class="icon">🖥</span><span class="label">Share</span>
+        </button>
+        <button class="action-btn" id="gameBtnPanel" onclick="gameTogether.open()" title="Game Together">
+          <span class="icon">🎮</span><span class="label">Play</span>
         </button>
         <button class="action-btn" onclick="openBotsModal()">
           <span class="icon">🤖</span><span class="label">Bots</span>
@@ -1523,6 +1493,7 @@ async function joinVoice(channelId) {
     window.rtc.setOutputDevice(state.settings.audioOutputDevice);
 
     state.socket.emit('voice:join', channelId);
+    window.gameTogether.refresh(); // a game may already be running here
 
     document.getElementById('mainApp').classList.add('voice-active');
     document.getElementById('voiceStatus').style.display = 'block';
@@ -1554,6 +1525,7 @@ function leaveVoice() {
 
   state.inVoice = false;
   state.voiceChannel = null;
+  window.gameTogether.refresh(); // closes the play view / frees our virtual pads
   state.isMuted = false;
   state.isDeafened = false;
 
@@ -2072,7 +2044,7 @@ function addVideoToGrid(id, stream, label, isMirrored = false, showCloseButton =
     <video id="video-${id}" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover; ${isMirrored ? 'transform: scaleX(-1);' : ''}"></video>
     <div class="video-label" style="position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.7); padding: 4px 8px; border-radius: 4px; font-size: 12px;">${escapeHtml(label)}</div>
     ${showCloseButton ? `<button onclick="stopScreenShare('${id}')" style="position: absolute; top: 8px; right: 8px; background: rgba(255,0,0,0.8); border: none; color: white; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center;">✕</button>` : ''}
-    ${showGameTogetherBtn ? `<button onclick="openGameTogetherMenu('${userId}', '${escapeHtml(label)}')" style="position: absolute; top: 8px; right: 8px; background: rgba(102, 51, 153, 0.9); border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600;">🎮 Play Together</button>` : ''}
+    ${showGameTogetherBtn ? `<button class="gt-tile-btn" onclick="gameTogether.open()">🎮 Play Together</button>` : ''}
   `;
 
   grid.appendChild(tile);
@@ -5384,7 +5356,7 @@ function openBotsModal() {
       <div class="settings-section">
         <h3>Gaming</h3>
         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; margin-top: 12px;">
-          <button class="bot-tile" onclick="state.previousModal = 'bots'; openGameTogetherFromBots();">
+          <button class="bot-tile" onclick="gameTogether.open()">
             <span style="font-size: 32px;">🎮</span>
             <span>Game Together</span>
           </button>
@@ -5677,7 +5649,7 @@ async function openGameTogetherBotModal() {
 }
 
 function renderGameTogetherContent(data) {
-  const { enabled, platform, backendAvailable, activeSessions } = data;
+  const { enabled, activeSessions } = data;
   document.getElementById('gameTogetherContent').innerHTML = `
     <div class="settings-section" style="margin-bottom: 16px;">
       <h3>Service Status</h3>
@@ -5685,34 +5657,15 @@ function renderGameTogetherContent(data) {
         <span style="color: ${enabled ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">${enabled ? 'Enabled' : 'Disabled'}</span>
         <button class="btn-${enabled ? 'danger' : 'primary'}" onclick="toggleGameTogether(${!enabled})">${enabled ? 'Disable' : 'Enable'}</button>
       </div>
-      <p style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">Virtual controller emulation for remote multiplayer gaming.</p>
+      <p style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">Lets people in voice play a host's local-multiplayer game. Hosting needs the Windows desktop app with ViGEmBus on the host's PC.</p>
     </div>
-
-    <div class="settings-section" style="margin-bottom: 16px;">
-      <h3>Platform Info</h3>
-      <div style="margin-top: 12px; padding: 12px; background: var(--bg-dark); border-radius: var(--radius-sm);">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-          <span style="color: var(--text-muted);">Platform:</span>
-          <span>${escapeHtml(platform || 'Unknown')}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between;">
-          <span style="color: var(--text-muted);">Controller Backend:</span>
-          <span style="color: ${backendAvailable ? 'var(--success)' : 'var(--danger)'};">${backendAvailable ? 'Available' : 'Not Available'}</span>
-        </div>
-      </div>
-      ${!backendAvailable ? `<p style="color: var(--warning); font-size: 12px; margin-top: 8px;">Virtual controller backend not available. Install ViGEmBus (Windows), uinput (Linux), or foohid (macOS).</p>` : ''}
-    </div>
-
     <div class="settings-section">
       <h3>Active Sessions (${activeSessions?.length || 0})</h3>
       <div style="margin-top: 12px;">
-        ${activeSessions?.length > 0 ? activeSessions.map(s => `
-          <div style="display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px;">
-            <div style="flex: 1;">
-              <div style="font-weight: 500;">Host: ${escapeHtml(s.hostUsername)}</div>
-              <div style="font-size: 12px; color: var(--text-muted);">${s.playerCount} player(s) connected</div>
-            </div>
-            <button class="btn-danger" onclick="stopGameTogetherSession('${s.channelId}')" style="padding: 6px 12px;">Stop</button>
+        ${activeSessions?.length ? activeSessions.map(s => `
+          <div style="padding: 10px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px;">
+            <div style="font-weight: 500;">Host: ${escapeHtml(s.hostUsername)}</div>
+            <div style="font-size: 12px; color: var(--text-muted);">${s.playerCount} player(s)</div>
           </div>
         `).join('') : '<p style="color: var(--text-muted);">No active sessions</p>'}
       </div>
@@ -5731,23 +5684,6 @@ async function toggleGameTogether(enabled) {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
     showToast(enabled ? 'Game Together enabled' : 'Game Together disabled', 'success');
-    openGameTogetherBotModal();
-    state.previousModal = prevModal;
-  } catch (error) {
-    showToast('Failed: ' + error.message, 'error');
-  }
-}
-
-async function stopGameTogetherSession(channelId) {
-  const prevModal = state.previousModal;
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/game-together/stop`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
-      body: JSON.stringify({ channelId })
-    });
-    if (!response.ok) throw new Error((await response.json()).error);
-    showToast('Session stopped', 'success');
     openGameTogetherBotModal();
     state.previousModal = prevModal;
   } catch (error) {
@@ -6299,610 +6235,6 @@ function openThemeSelector() {
 
   overlay.classList.add('active');
 }
-
-// ==================== Game Together Functions ====================
-
-// Game Together state
-state.gameTogether = {
-  active: false,
-  isHost: false,
-  hostUserId: null,
-  playerSlot: null,
-  gamepadIndex: null,
-  pollingInterval: null
-};
-
-// Open Game Together from bots modal - shows the main Game Together info/start screen
-function openGameTogetherFromBots() {
-  if (!state.inVoice) {
-    showToast('Join a voice channel first', 'error');
-    return;
-  }
-
-  const modal = document.getElementById('modalContent');
-  const overlay = document.getElementById('modalOverlay');
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2>🎮 Game Together</h2>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <p style="color: var(--text-muted); margin-bottom: 16px;">Play ANY local multiplayer game together with friends in your voice channel!</p>
-
-      <div style="background: var(--bg-dark); padding: 16px; border-radius: var(--radius-md); margin-bottom: 24px;">
-        <h3 style="margin-bottom: 12px;">How it works:</h3>
-        <ul style="text-align: left; color: var(--text-muted); line-height: 1.8; padding-left: 20px;">
-          <li>One person hosts the game on their PC</li>
-          <li>Host shares their screen in the voice channel</li>
-          <li>Other players join and their controllers get mapped to virtual controllers on the host's PC</li>
-          <li>Works with ANY game that supports local multiplayer!</li>
-        </ul>
-      </div>
-
-      <div style="background: var(--bg-dark); padding: 16px; border-radius: var(--radius-md); margin-bottom: 24px;">
-        <h3 style="margin-bottom: 12px;">Requirements:</h3>
-        <ul style="text-align: left; color: var(--text-muted); line-height: 1.8; padding-left: 20px;">
-          <li><strong>Host:</strong> Windows with ViGEmBus driver or Linux with uinput</li>
-          <li><strong>Players:</strong> Any gamepad/controller connected to their computer</li>
-        </ul>
-      </div>
-
-      <div style="display: flex; gap: 12px; justify-content: center;">
-        <button class="btn-primary" onclick="startGameTogetherAsHost()" style="flex: 1; max-width: 200px;">
-          🖥️ Host Game
-        </button>
-        <button class="btn-secondary" onclick="showGameTogetherJoinList()" style="flex: 1; max-width: 200px;">
-          👥 Join Game
-        </button>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="${state.previousModal === 'bots' ? 'openBotsModal()' : 'closeModal()'}">Back</button>
-    </div>
-  `;
-
-  overlay.classList.add('active');
-}
-
-// Start Game Together as host
-async function startGameTogetherAsHost() {
-  if (!state.voiceChannel) {
-    showToast('Join a voice channel first', 'error');
-    return;
-  }
-
-  try {
-    showToast('Starting Game Together session...', 'info');
-
-    const response = await fetch(`${state.serverUrl}/api/admin/game-together/start`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${state.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        channelId: state.voiceChannel._id
-      })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to start session');
-    }
-
-    state.gameTogether.active = true;
-    state.gameTogether.isHost = true;
-    state.gameTogether.hostUserId = state.user._id;
-    state.gameTogether.playerSlot = 1;
-
-    closeModal();
-    showToast('🎮 Game Together session started! You are the host (Player 1). Share your screen!', 'success');
-  } catch (error) {
-    console.error('Failed to start Game Together session:', error);
-    showToast('Failed to start session: ' + error.message, 'error');
-  }
-}
-
-// Show list of available Game Together sessions to join
-async function showGameTogetherJoinList() {
-  const modal = document.getElementById('modalContent');
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2>🎮 Join Game Together</h2>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div id="gameTogetherSessionList" style="text-align: center;">
-        <div class="loading-spinner"></div>
-        <p style="color: var(--text-muted); margin-top: 12px;">Looking for sessions...</p>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="openGameTogetherFromBots()">Back</button>
-    </div>
-  `;
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/game-together/sessions`, {
-      headers: { 'Authorization': `Bearer ${state.token}` }
-    });
-    const data = await response.json();
-
-    const listEl = document.getElementById('gameTogetherSessionList');
-    if (!data.sessions || data.sessions.length === 0) {
-      listEl.innerHTML = `
-        <div style="text-align: center; padding: 24px; color: var(--text-muted);">
-          <div style="font-size: 48px; margin-bottom: 16px;">🎮</div>
-          <p>No active Game Together sessions found.</p>
-          <p style="font-size: 12px; margin-top: 8px;">Ask someone in voice to start hosting!</p>
-        </div>
-      `;
-    } else {
-      listEl.innerHTML = data.sessions.map(session => `
-        <div style="display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 8px;">
-          <div style="flex: 1;">
-            <div style="font-weight: 500; color: var(--text-primary);">Hosted by ${escapeHtml(session.hostUsername)}</div>
-            <div style="font-size: 12px; color: var(--text-muted);">${session.playerCount}/4 players</div>
-          </div>
-          <button class="btn-primary" onclick="joinGameTogetherSession('${session.hostUserId}')" style="padding: 6px 12px;">Join</button>
-        </div>
-      `).join('');
-    }
-  } catch (error) {
-    document.getElementById('gameTogetherSessionList').innerHTML = `
-      <p style="color: var(--danger);">Failed to load sessions: ${error.message}</p>
-    `;
-  }
-}
-
-// Join a specific Game Together session
-async function joinGameTogetherSession(hostUserId) {
-  try {
-    showToast('Joining Game Together session...', 'info');
-
-    const response = await fetch(`${state.serverUrl}/api/admin/game-together/join`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${state.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        hostUserId,
-        channelId: state.voiceChannel._id
-      })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to join session');
-    }
-
-    state.gameTogether.active = true;
-    state.gameTogether.isHost = false;
-    state.gameTogether.hostUserId = hostUserId;
-    state.gameTogether.playerSlot = data.playerSlot;
-
-    closeModal();
-    showToast(`🎮 Joined! You are Player ${data.playerSlot}. Connect your controller!`, 'success');
-
-    // Start gamepad polling for this player
-    startGameTogetherPolling();
-  } catch (error) {
-    console.error('Failed to join Game Together session:', error);
-    showToast('Failed to join: ' + error.message, 'error');
-  }
-}
-
-// Start polling gamepad for Game Together
-function startGameTogetherPolling() {
-  if (state.gameTogether.pollingInterval) return;
-
-  // Find first connected gamepad
-  const gamepads = navigator.getGamepads();
-  for (let i = 0; i < gamepads.length; i++) {
-    if (gamepads[i]) {
-      state.gameTogether.gamepadIndex = i;
-      showToast(`Controller connected: ${gamepads[i].id}`, 'success');
-      break;
-    }
-  }
-
-  state.gameTogether.pollingInterval = setInterval(() => {
-    pollGameTogetherInput();
-  }, 16); // ~60Hz polling
-}
-
-// Poll gamepad input for Game Together
-function pollGameTogetherInput() {
-  if (!state.gameTogether.active || state.gameTogether.isHost) return;
-
-  const gamepads = navigator.getGamepads();
-  const gamepad = gamepads[state.gameTogether.gamepadIndex] || gamepads[0];
-
-  if (!gamepad) return;
-
-  // Map to Xbox 360 layout
-  const inputData = {
-    buttons: {
-      A: gamepad.buttons[0]?.pressed || false,
-      B: gamepad.buttons[1]?.pressed || false,
-      X: gamepad.buttons[2]?.pressed || false,
-      Y: gamepad.buttons[3]?.pressed || false,
-      LB: gamepad.buttons[4]?.pressed || false,
-      RB: gamepad.buttons[5]?.pressed || false,
-      BACK: gamepad.buttons[8]?.pressed || false,
-      START: gamepad.buttons[9]?.pressed || false,
-      LS: gamepad.buttons[10]?.pressed || false,
-      RS: gamepad.buttons[11]?.pressed || false,
-      DPAD_UP: gamepad.buttons[12]?.pressed || false,
-      DPAD_DOWN: gamepad.buttons[13]?.pressed || false,
-      DPAD_LEFT: gamepad.buttons[14]?.pressed || false,
-      DPAD_RIGHT: gamepad.buttons[15]?.pressed || false,
-      GUIDE: gamepad.buttons[16]?.pressed || false
-    },
-    axes: {
-      LEFT_X: gamepad.axes[0] || 0,
-      LEFT_Y: gamepad.axes[1] || 0,
-      RIGHT_X: gamepad.axes[2] || 0,
-      RIGHT_Y: gamepad.axes[3] || 0,
-      LT: gamepad.buttons[6]?.value || 0,
-      RT: gamepad.buttons[7]?.value || 0
-    }
-  };
-
-  // Send via socket for low latency
-  if (state.socket) {
-    state.socket.emit('gameTogether:input', {
-      hostUserId: state.gameTogether.hostUserId,
-      playerSlot: state.gameTogether.playerSlot,
-      inputData
-    });
-  }
-}
-
-// Stop Game Together polling
-function stopGameTogetherPolling() {
-  if (state.gameTogether.pollingInterval) {
-    clearInterval(state.gameTogether.pollingInterval);
-    state.gameTogether.pollingInterval = null;
-  }
-}
-
-
-// Open Game Together menu
-function openGameTogetherMenu(hostUserId, hostLabel) {
-  if (!state.inVoice) {
-    showToast('Join a voice channel first', 'error');
-    return;
-  }
-
-  const modal = document.getElementById('modalContent');
-  const overlay = document.getElementById('modalOverlay');
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2>🎮 Game Together</h2>
-      <button class="modal-close" onclick="closeModalFull()">✕</button>
-    </div>
-    <div class="modal-body" style="text-align: center;">
-      <p style="margin-bottom: 24px;">Play games together with ${hostLabel}!</p>
-
-      <div style="background: var(--bg-dark); padding: 16px; border-radius: var(--radius-md); margin-bottom: 24px;">
-        <h3 style="margin-bottom: 12px;">How it works:</h3>
-        <ul style="text-align: left; color: var(--text-muted); line-height: 1.6;">
-          <li>Host starts the session (becomes Player 1)</li>
-          <li>You join and become Player 2, 3, or 4</li>
-          <li>Your controller gets mapped to the host's system</li>
-          <li>Play any local multiplayer game together!</li>
-        </ul>
-      </div>
-
-      <div style="display: flex; gap: 12px; justify-content: center;">
-        <button class="btn-primary" onclick="requestStartGameTogether('${hostUserId}')" style="flex: 1; max-width: 200px;">
-          🎮 Start Session
-        </button>
-        <button class="btn-primary" onclick="joinGameTogether('${hostUserId}')" style="flex: 1; max-width: 200px;">
-          👥 Join Session
-        </button>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModalFull()">Cancel</button>
-    </div>
-  `;
-
-  overlay.style.display = 'flex';
-}
-
-// Request to start a Game Together session (as host)
-async function requestStartGameTogether(hostUserId) {
-  closeModalFull();
-
-  if (!state.voiceChannel) {
-    showToast('Join a voice channel first', 'error');
-    return;
-  }
-
-  try {
-    showToast('Starting Game Together session...', 'info');
-
-    const response = await fetch(`${state.serverUrl}/api/admin/game-together/start`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${state.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        channelId: state.voiceChannel
-      })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to start session');
-    }
-
-    state.gameTogether.active = true;
-    state.gameTogether.isHost = true;
-    state.gameTogether.hostUserId = state.user._id;
-    state.gameTogether.playerSlot = 1;
-
-    showToast('🎮 Game Together session started! You are Player 1', 'success');
-
-    // Note: Host uses their physical controller, no emulation needed
-  } catch (error) {
-    console.error('Failed to start Game Together session:', error);
-    showToast('Failed to start session: ' + error.message, 'error');
-  }
-}
-
-// Join an existing Game Together session
-async function joinGameTogether(hostUserId) {
-  closeModalFull();
-
-  if (!state.voiceChannel) {
-    showToast('Join a voice channel first', 'error');
-    return;
-  }
-
-  try {
-    showToast('Joining Game Together session...', 'info');
-
-    const response = await fetch(`${state.serverUrl}/api/admin/game-together/join`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${state.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        channelId: state.voiceChannel
-      })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to join session');
-    }
-
-    state.gameTogether.active = true;
-    state.gameTogether.isHost = false;
-    state.gameTogether.hostUserId = hostUserId;
-    state.gameTogether.playerSlot = data.playerSlot;
-
-    showToast(`🎮 Joined as Player ${data.playerSlot}! Connect your controller.`, 'success');
-
-    // Start polling gamepad for input
-    startGameTogetherGamepadPolling();
-  } catch (error) {
-    console.error('Failed to join Game Together session:', error);
-    showToast('Failed to join session: ' + error.message, 'error');
-  }
-}
-
-// Leave Game Together session
-async function leaveGameTogether() {
-  if (!state.gameTogether.active) return;
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/game-together/leave`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${state.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        channelId: state.voiceChannel
-      })
-    });
-
-    if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.error || 'Failed to leave session');
-    }
-
-    stopGameTogetherGamepadPolling();
-
-    state.gameTogether.active = false;
-    state.gameTogether.isHost = false;
-    state.gameTogether.hostUserId = null;
-    state.gameTogether.playerSlot = null;
-
-    showToast('Left Game Together session', 'info');
-  } catch (error) {
-    console.error('Failed to leave Game Together session:', error);
-    showToast('Failed to leave session: ' + error.message, 'error');
-  }
-}
-
-// Stop Game Together session (host only)
-async function stopGameTogether() {
-  if (!state.gameTogether.active || !state.gameTogether.isHost) return;
-
-  try {
-    const response = await fetch(`${state.serverUrl}/api/admin/game-together/stop`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${state.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        channelId: state.voiceChannel
-      })
-    });
-
-    if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.error || 'Failed to stop session');
-    }
-
-    state.gameTogether.active = false;
-    state.gameTogether.isHost = false;
-    state.gameTogether.hostUserId = null;
-    state.gameTogether.playerSlot = null;
-
-    showToast('Game Together session stopped', 'info');
-  } catch (error) {
-    console.error('Failed to stop Game Together session:', error);
-    showToast('Failed to stop session: ' + error.message, 'error');
-  }
-}
-
-// Start polling gamepad for Game Together
-function startGameTogetherGamepadPolling() {
-  if (state.gameTogether.pollingInterval) return;
-
-  console.log('[Game Together] Starting gamepad polling');
-  window.touchPad?.start();
-
-  state.gameTogether.pollingInterval = setInterval(() => {
-    pollGameTogetherGamepad();
-  }, 16); // ~60 FPS
-}
-
-// Stop polling gamepad
-function stopGameTogetherGamepadPolling() {
-  if (state.gameTogether.pollingInterval) {
-    clearInterval(state.gameTogether.pollingInterval);
-    state.gameTogether.pollingInterval = null;
-    console.log('[Game Together] Stopped gamepad polling');
-  }
-  window.touchPad?.stop();
-}
-
-// Poll gamepad and send input to server
-function pollGameTogetherGamepad() {
-  const gamepads = navigator.getGamepads();
-
-  // Find first connected gamepad
-  let gamepad = null;
-  if (state.gameTogether.gamepadIndex !== null) {
-    gamepad = gamepads[state.gameTogether.gamepadIndex];
-  }
-
-  if (!gamepad) {
-    for (let i = 0; i < gamepads.length; i++) {
-      if (gamepads[i]) {
-        gamepad = gamepads[i];
-        state.gameTogether.gamepadIndex = i;
-        break;
-      }
-    }
-  }
-
-  // No physical pad: fall back to the on-screen touch pad (touchpad.js).
-  if (!gamepad) {
-    const touch = window.touchPad?.read();
-    if (touch) sendGameTogetherInput(touch);
-    return;
-  }
-
-  // Map gamepad to Xbox controller layout
-  const inputData = {
-    buttons: {
-      A: gamepad.buttons[0]?.pressed || false,
-      B: gamepad.buttons[1]?.pressed || false,
-      X: gamepad.buttons[2]?.pressed || false,
-      Y: gamepad.buttons[3]?.pressed || false,
-      LB: gamepad.buttons[4]?.pressed || false,
-      RB: gamepad.buttons[5]?.pressed || false,
-      BACK: gamepad.buttons[8]?.pressed || false,
-      START: gamepad.buttons[9]?.pressed || false,
-      LS: gamepad.buttons[10]?.pressed || false,
-      RS: gamepad.buttons[11]?.pressed || false,
-      DPAD_UP: gamepad.buttons[12]?.pressed || false,
-      DPAD_DOWN: gamepad.buttons[13]?.pressed || false,
-      DPAD_LEFT: gamepad.buttons[14]?.pressed || false,
-      DPAD_RIGHT: gamepad.buttons[15]?.pressed || false,
-      GUIDE: gamepad.buttons[16]?.pressed || false
-    },
-    axes: {
-      LEFT_X: gamepad.axes[0] || 0,
-      LEFT_Y: gamepad.axes[1] || 0,
-      RIGHT_X: gamepad.axes[2] || 0,
-      RIGHT_Y: gamepad.axes[3] || 0,
-      LT: gamepad.buttons[6]?.value || 0,
-      RT: gamepad.buttons[7]?.value || 0
-    }
-  };
-
-  sendGameTogetherInput(inputData);
-}
-
-// Send input to server (throttled)
-let lastGameTogetherInputTime = 0;
-async function sendGameTogetherInput(inputData) {
-  const now = Date.now();
-  if (now - lastGameTogetherInputTime < 16) return; // Max 60 updates/second
-  lastGameTogetherInputTime = now;
-
-  if (!state.socket || !state.gameTogether.active) return;
-
-  // Send via Socket.IO for low latency
-  state.socket.emit('gameTogether:input', {
-    channelId: state.voiceChannel,
-    inputData
-  });
-
-  // Also send via HTTP API as backup
-  try {
-    await fetch(`${state.serverUrl}/api/admin/game-together/input`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${state.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        channelId: state.voiceChannel,
-        inputData
-      })
-    });
-  } catch (error) {
-    // Silently fail, socket.io is primary
-  }
-}
-
-// Gamepad connection event listeners
-window.addEventListener('gamepadconnected', (e) => {
-  console.log('Gamepad connected:', e.gamepad.id);
-  if (state.gameTogether?.active && !state.gameTogether.isHost) {
-    state.gameTogether.gamepadIndex = e.gamepad.index;
-    showToast(`Controller connected: ${e.gamepad.id}`, 'success');
-  }
-});
-
-window.addEventListener('gamepaddisconnected', (e) => {
-  console.log('Gamepad disconnected:', e.gamepad.id);
-  if (state.gameTogether?.gamepadIndex === e.gamepad.index) {
-    state.gameTogether.gamepadIndex = null;
-    showToast('Controller disconnected', 'warning');
-  }
-});
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {

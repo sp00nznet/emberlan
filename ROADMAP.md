@@ -4,14 +4,17 @@ Current state is in the [README](README.md#status). This file is intent, not fac
 
 ## Next
 
-1. **TURN for voice behind strict NAT.** Voice is STUN-only; add a TURN server (coturn) setting
+1. **Play Game Together with a real driver and game.** The harness proves the pipeline with a
+   stand-in for ViGEmBus; play an actual local-multiplayer game on a Windows PC with ViGEmBus,
+   with guests on a phone and a desktop, and note the latency.
+2. **TURN for voice behind strict NAT.** Voice is STUN-only; add a TURN server (coturn) setting
    and pass it to `ICE_SERVERS` in `client/public/voice-rtc.js`.
-2. **Signed Android release builds.** The release workflow attaches a debug APK; a release-signed
+3. **Signed Android release builds.** The release workflow attaches a debug APK; a release-signed
    APK needs a keystore stored as a repository secret.
-3. **Tighten the CSP:** move the UI's ~190 inline `onclick` handlers to `addEventListener`, then
+4. **Tighten the CSP:** move the UI's ~190 inline `onclick` handlers to `addEventListener`, then
    drop `script-src-attr 'unsafe-inline'` from `server/index.js`.
-4. **Tag v1.1.0** so the release workflow publishes the first Windows installer and APK.
-5. A working change-password form in Settings > Account. The server endpoint
+5. **Tag v1.1.0** so the release workflow publishes the first Windows installer and APK.
+6. A working change-password form in Settings > Account. The server endpoint
    `PUT /api/auth/password` exists; the button only shows a toast.
 
 - **Channel history can overwrite a just-sent message.** `loadMessages` replaces the list when

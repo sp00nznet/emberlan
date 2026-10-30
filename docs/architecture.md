@@ -70,7 +70,7 @@ Desktop and Android have no same origin, so every request is built from `state.s
   each socket to `user:<id>`, and to `channel:<id>` or `voice:<id>` rooms on `channel:join` /
   `voice:join`. Events the server handles: `channel:join|leave`, `message:send|edit|delete|reaction`,
   `typing:start|stop`, `dm:send|read|setPublicKey|getPublicKey`, `voice:join|leave|mute|deafen`,
-  `camera:toggle`, `screen:start|stop`, `status:update|custom`, `gameTogether:input`,
+  `camera:toggle`, `screen:start|stop`, `status:update|custom`,
   `webrtc:offer|answer|ice-candidate`, and the `federation:*` events.
 - **Handlers are registered synchronously on connect.** They used to be registered after an
   `await`, which dropped a `channel:join` sent immediately after connecting.

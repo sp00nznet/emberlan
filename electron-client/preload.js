@@ -34,6 +34,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File sharing - folder selection
   selectFolder: () => ipcRenderer.invoke('select-folder'),
 
+  // Game Together host: virtual Xbox pads for guests (ViGEmBus)
+  gamepad: {
+    status: () => ipcRenderer.invoke('gamepad-status'),
+    set: (slot, input) => ipcRenderer.send('gamepad-set', slot, input),
+    remove: (slot) => ipcRenderer.send('gamepad-remove', slot),
+    clear: () => ipcRenderer.send('gamepad-clear'),
+  },
+
   // Platform info
   platform: process.platform,
   version: process.versions.electron

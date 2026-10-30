@@ -35,8 +35,14 @@
     if (p) return p;
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     p = { id, pc, polite: String(selfId) > String(id), makingOffer: false, ignoreOffer: false,
-      queue: Promise.resolve(), senders: new Map(), meta: {}, audio: new Map(), videos: new Set() };
+      queue: Promise.resolve(), senders: new Map(), meta: {}, audio: new Map(), videos: new Map() };
     peers.set(id, p);
+
+    // Game Together controller input. Pre-negotiated (same id on both sides), so it rides the
+    // first offer with no extra signaling. Unordered, no retransmits: each message is the whole
+    // pad state, so a lost one is replaced 16 ms later instead of holding up newer ones.
+    p.dc = pc.createDataChannel('input', { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
+    p.dc.onmessage = (e) => api.onData?.(id, e.data);
 
     for (const { stream } of local.values()) addTracks(p, stream);
 
@@ -61,8 +67,8 @@
       const stream = streams[0] || new MediaStream([track]);
       if (track.kind === 'audio') return playAudio(p, stream);
       if (p.videos.has(stream.id)) return;
-      p.videos.add(stream.id);
       const meta = p.meta[stream.id] || { kind: 'camera', label: 'Camera' };
+      p.videos.set(stream.id, { stream, meta });
       api.onRemoteVideo?.(id, stream, meta);
       // The sender removing its tracks fires removetrack here (renegotiation).
       stream.onremovetrack = () => {
@@ -134,13 +140,14 @@
     if (!p) return;
     p.pc.close();
     for (const el of p.audio.values()) { el.srcObject = null; el.remove(); }
-    for (const sid of [...p.videos]) videoGone(p, sid);
+    for (const sid of [...p.videos.keys()]) videoGone(p, sid);
     peers.delete(id);
   }
 
   const api = {
     onRemoteVideo: null,
     onRemoteVideoGone: null,
+    onData: null, // (userId, string): Game Together input from a peer
 
     /** Attach to the app's socket once; call again after a reconnect. */
     attach(s) {
@@ -205,9 +212,23 @@
       return out;
     },
 
+    /** Send a small message (Game Together input) straight to one user. False if not connected. */
+    send(id, data) {
+      const dc = peers.get(String(id))?.dc;
+      if (dc?.readyState !== 'open') return false;
+      dc.send(data);
+      return true;
+    },
+
+    /** A user's screen share (or else camera) stream, if they're sending one. */
+    remoteVideo(id) {
+      const vids = [...(peers.get(String(id))?.videos.values() || [])];
+      return (vids.find((v) => v.meta.kind === 'screen') || vids[0])?.stream || null;
+    },
+
     /** For the conformance harness and debugging. */
     peers() {
-      return [...peers.values()].map((p) => ({ id: p.id, state: p.pc.connectionState, videos: [...p.videos] }));
+      return [...peers.values()].map((p) => ({ id: p.id, state: p.pc.connectionState, input: p.dc.readyState, videos: [...p.videos.keys()] }));
     },
   };
   window.rtc = api;

@@ -1,71 +1,101 @@
 # Game Together
 
-Game Together is meant to let remote players play a local-multiplayer game: each remote player's
-gamepad drives a virtual controller (Player 2, 3, 4) on the machine running the game.
+Play a local-multiplayer game with people in your voice channel. The host runs the game on
+their Windows PC; up to three others join as Players 2–4 from the desktop app, a browser or the
+Android app, with a controller or the on-screen touch pad. The game sees them as Xbox controllers
+plugged into the host's PC, so any game that supports local multiplayer with Xbox pads works.
 
-## What works today
+![A guest on a phone playing the host's game with the touch pad](screenshots/android-touchpad.png)
 
-- Session bookkeeping: a host starts a session for a voice channel, others join and get a player
-  slot (up to 4), and everyone sees `gameTogether:session-started`, `player-joined`,
-  `player-left` and `session-stopped`.
-- Remote players' browsers read their gamepad with the HTML5 Gamepad API and send
-  `gameTogether:input` over Socket.IO; the server acknowledges with
-  `gameTogether:input-received`.
+(The harness takes that screenshot: the "game" is a canvas test pattern streamed from the host tab,
+and Player 2 moves with the guest's touches.)
 
-## Touch gamepad (Android and phones)
+## How it works
 
-`client/public/touchpad.js` draws an on-screen controller during a Game Together session when no
-physical controller is connected. A USB or Bluetooth pad seen by the Gamepad API always wins and
-hides it; it comes back if that pad disconnects. Two fingers work at once (for example A plus the
-left stick). Double-tap a stick for a stick click. **Edit layout** lets you drag any control or hide
-it with ×; size and opacity sliders and **Reset** sit beside it. The layout is saved per device in
-`localStorage`. It is part of the shared UI, so a phone browser gets it as well as the Android app.
+```
+guest's pad or touch pad --(WebRTC data channel, peer to peer)--> host's desktop app --> ViGEmBus --> game
+host's game window       --(WebRTC screen share)-----------------> guest's play view
+```
 
-## What does not
+- **Input never goes through the server.** Each guest sends their whole pad state about 60 times a
+  second over an unordered, no-retransmit data channel on the voice call (`client/public/voice-rtc.js`).
+  A lost message is replaced by the next one instead of delaying it. Unchanged state is resent every
+  250 ms, so a lost "button released" can't leave a button held.
+- **The server only hands out seats** (`server/services/gameTogetherService.js`): one session per
+  voice channel, host = Player 1, guests get the lowest free slot 2–4. Leaving voice or
+  disconnecting frees your seat; the host leaving ends the session.
+- **The host's app drives virtual pads** (`electron-client/gamepads.js`): one virtual Xbox 360
+  controller per guest slot via [ViGEmBus](https://github.com/nefarius/ViGEmBus). The host only
+  accepts input from guests who hold a seat, and maps each guest to their own pad.
+- **Guests get a play view** (`client/public/gametogether.js`): the host's screen share fills the
+  screen, with a bar for the seat number, the input source and **Leave game**.
 
-- **No virtual controller is created on any platform.** `server/services/gameTogetherService.js`
-  has three backends, and none drives a device:
-  - Windows (`WindowsViGEmBackend`): `checkViGEmAvailable()` always returns `false`, so it is never
-    used, even with ViGEmBus installed.
-  - Linux (`LinuxUInputBackend`): reports available when `/dev/uinput` is accessible, then only
-    stores button and axis state in memory; nothing is written to `/dev/uinput`.
-  - macOS gets a stub foohid backend and any other platform a mock that also only stores state.
-    (macOS is not a supported server platform.)
-- **The remote players cannot see the game**, because screen share carries no video yet (see the
-  README Status).
-- The virtual controllers would be created on the **server's** machine, so the game has to run on
-  the machine hosting the Emberlan server (for example the desktop app's embedded server). In
-  Docker, `docker-compose.yml` passes `/dev/uinput` into the server container for this reason.
+## Hosting (Windows)
 
-Making it real needs a ViGEm binding on Windows, uinput writes on Linux, (the host's screen share already reaches players over WebRTC).
+1. Install the [ViGEmBus driver](https://github.com/nefarius/ViGEmBus/releases) once. Without it,
+   **Host a game** says "ViGEmBus is not installed".
+2. Use the Emberlan desktop app; browsers and phones can join but not host.
+3. Join a voice channel, open **🎮 Play** in the voice panel, and choose **Host a game**. Pick the
+   game window when asked to share your screen.
+4. Your own controller stays Player 1. Guests' pads appear as Xbox controllers in the order they
+   join; most games show them as Players 2–4.
+
+## Joining
+
+Open **🎮 Play** in the voice panel (or **🎮 Play Together** on the host's screen share) and choose
+**Join as a player**. Any of these work, on any client:
+
+- **A USB or Bluetooth controller.** Read through the browser Gamepad API in Xbox layout. It always
+  wins over the touch pad.
+- **The on-screen touch pad** (`client/public/touchpad.js`), on phones and other touch screens when
+  no controller is connected. If a controller disconnects mid-game, the pad comes back.
+  - Two fingers work at once (for example A plus the left stick).
+  - Double-tap a stick for a stick click.
+  - **Edit layout** lets you drag any control or hide it with ×. Size and opacity sliders and
+    **Reset** sit beside it. The layout is saved per device.
+- On a desktop with neither, the play view says "Connect a controller to play".
+
+## Limits
+
+- Hosting is Windows only (ViGEmBus). The host's PC needs the driver; nobody else does.
+- Up to 4 players: the host plus three guests.
+- Latency is the voice call's network path plus one video frame. The input and screen share go
+  peer to peer, so this works best on a LAN or a good home connection. Like voice, it uses STUN only
+  (see [ROADMAP.md](../ROADMAP.md) for TURN).
+- What the harness proves and what it doesn't:
+  - **Proven:** the whole pipeline in two real browser tabs (see [conformance.md](conformance.md)),
+    and the input-to-Xbox-pad mapping against a stand-in for ViGEmBus.
+  - **Not proven:** a real ViGEmBus driver and a real game, which need a Windows PC with the driver
+    installed.
 
 ## Admin
 
-Settings > Media Bots > Game Together enables it (`POST /api/admin/game-together/enable`) and shows
-whether a backend is available (`GET /api/admin/game-together/status`).
+Settings > Media Bots > Game Together turns the feature on or off for the server
+(`POST /api/admin/game-together/enable`, on by default) and lists running sessions.
 
 ## API
 
 All under `/api/admin/game-together/`, JWT required; `status` and `enable` are admin only.
+Errors are `400 { error }`.
 
-| Method | Path | Body | Purpose |
+| Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `status` | | enabled flag, backend availability |
-| POST | `enable` | `{ enabled }` | turn the feature on or off |
-| POST | `start` | `{ channelId }` | start a session as host |
-| POST | `stop` | `{ channelId }` | stop it (host) |
-| GET | `sessions` | | active sessions |
-| GET | `session/:channelId` | | one session |
-| POST | `join` | `{ channelId }` | join, returns `{ playerSlot }` |
-| POST | `leave` | `{ channelId }` | leave |
-| POST | `input` | `{ channelId, inputData }` | input over HTTP (the UI uses the socket event instead) |
+| GET | `status` | | `{ enabled, activeSessions }` |
+| POST | `enable` | `{ enabled }` | `{ success, enabled }` |
+| POST | `start` | `{ channelId }` | the session |
+| POST | `stop` | `{ channelId }` | host only |
+| GET | `sessions` | | `{ sessions }` |
+| GET | `session/:channelId` | | `{ session }` (`null` when none) |
+| POST | `join` | `{ channelId }` | `{ playerSlot, session }` |
+| POST | `leave` | `{ channelId }` | the host leaving ends the session |
 
-Socket.IO: client sends `gameTogether:input` `{ channelId, inputData }`; server sends
-`gameTogether:session-started` `{ channelId, hostUserId, hostUsername, maxPlayers }`,
+A session is `{ channelId, hostUserId, hostUsername, startedAt, maxPlayers, playerCount, players: [{ userId, username, playerSlot }] }`.
+
+Socket.IO, sent to the voice channel's room: `gameTogether:session-started` (the session),
 `gameTogether:session-stopped` `{ channelId }`,
 `gameTogether:player-joined` `{ channelId, userId, username, playerSlot, playerCount }`,
-`gameTogether:player-left` `{ channelId, userId, playerSlot, playerCount }`,
-`gameTogether:input-received` `{ channelId, userId, timestamp }`.
+`gameTogether:player-left` `{ channelId, userId, playerSlot, playerCount }`.
 
-Inputs map to the Xbox 360 layout: A, B, X, Y, LB, RB, BACK, START, LS, RS, D-pad, GUIDE; left
-and right stick X/Y; LT and RT.
+Input (data channel `input`, id 0, JSON):
+`{ buttons: { A, B, X, Y, LB, RB, BACK, START, LS, RS, GUIDE, DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT }, axes: { LEFT_X, LEFT_Y, RIGHT_X, RIGHT_Y, LT, RT } }`.
+Sticks run from -1 to 1 with Y down positive (browser convention), and triggers from 0 to 1.

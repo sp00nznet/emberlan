@@ -20,15 +20,14 @@ curl http://localhost:3001/health
 | Service | Port | Notes |
 |---|---|---|
 | `mongodb` | internal | `mongo:7`, database `f7lans`, volume `f7lans-mongodb-data` |
-| `server` | `${SERVER_PORT:-3001}` | serves the API, Socket.IO and the web UI; uploads in volume `f7lans-uploads`; gets `/dev/uinput` and `SYS_ADMIN` for Game Together virtual controllers |
+| `server` | `${SERVER_PORT:-3001}` | serves the API, Socket.IO and the web UI; uploads in volume `f7lans-uploads` |
 | `webclient` | `${WEBCLIENT_PORT:-3000}` | profile `with-webclient`; nginx serving the UI separately. Not needed, since `server` already serves it |
 | `nginx` | 80, 443 | profile `with-nginx`; reverse proxy using `docker/nginx.conf` (HTTPS block commented out, see HTTPS below) |
 
 Enable a profile with `docker-compose --profile with-nginx up -d`.
 
-The `/dev/uinput` device mapping needs a Linux host. On Docker Desktop for Windows, remove the
-`devices` and `cap_add` lines from `docker-compose.yml` if the server container fails to start
-(Game Together controllers will not work then).
+Game Together needs nothing from the server container: virtual controllers are created by the
+host's desktop app ([game-together.md](game-together.md)).
 
 ### Plain Node
 

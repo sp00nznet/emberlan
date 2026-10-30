@@ -368,7 +368,6 @@ router.get('/admin/game-together/sessions', authenticate, gameTogetherController
 router.get('/admin/game-together/session/:channelId', authenticate, gameTogetherController.getSession);
 router.post('/admin/game-together/join', authenticate, gameTogetherController.joinAsPlayer);
 router.post('/admin/game-together/leave', authenticate, gameTogetherController.leaveAsPlayer);
-router.post('/admin/game-together/input', authenticate, gameTogetherController.handleInput);
 
 // ===== Channel Moderation Routes =====
 router.post('/channels/:channelId/kick/:userId', authenticate, adminOnly, channelController.kickUser);

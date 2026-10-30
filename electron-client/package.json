@@ -14,7 +14,8 @@
     "build:win": "npm run copy-renderer && electron-builder --win",
     "build:win:unified": "npm run copy-renderer && npm run copy-server && electron-builder --win -c electron-builder-unified.json",
     "build:win:headless": "npm run copy-server && electron-builder --win -c electron-builder-headless.json",
-    "copy-server": "node scripts/copy-server.js"
+    "copy-server": "node scripts/copy-server.js",
+    "postinstall": "electron-builder install-app-deps"
   },
   "build": {
     "appId": "com.emberlan.client",
@@ -32,8 +33,7 @@
         {
           "target": "nsis",
           "arch": [
-            "x64",
-            "ia32"
+            "x64"
           ]
         },
         {
@@ -64,5 +64,8 @@
     "name": "Emberlan",
     "email": "admin@emberlan.com"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "optionalDependencies": {
+    "vigemclient": "^1.5.3"
+  }
 }

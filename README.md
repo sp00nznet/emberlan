@@ -23,7 +23,10 @@ data; `F7LANS_*` environment variables still work as fallbacks for `EMBERLAN_*`.
 
 - Works today: accounts (local and Google sign-in), text channels, E2E encrypted DMs, voice
   channels with audio, camera video and screen share (WebRTC, peer to peer), admin settings,
-  media bot configuration, federation setup.
+  media bot configuration, federation setup, and Game Together: play a host's local-multiplayer
+  game from a controller or phone touch pad ([docs/game-together.md](docs/game-together.md)).
+  Hosting needs the Windows app and the ViGEmBus driver. The pipeline is proven in the harness;
+  it has not yet been played with a real driver and game.
 - Voice is a full mesh: each user sends one copy to every other user, so it suits LAN-party sizes
   (around 8 people). It uses STUN only: it works on a LAN, over Tailscale and on most home
   networks, but users behind strict NAT need a TURN server (see [ROADMAP.md](ROADMAP.md)).
@@ -41,7 +44,7 @@ Captured from the running app by the conformance harness (`node conformance/run.
 
 ![Web client, #general channel](docs/screenshots/desktop-chat.png)
 
-![Android, Game Together touch gamepad](docs/screenshots/android-touchpad.png)
+![Game Together on a phone: touch pad over the host's streamed game](docs/screenshots/android-touchpad.png)
 
 The images under `design_ref/design_handoff_ember/screenshots/` are design mockups, not captures.
 
@@ -154,7 +157,7 @@ reach a plain-HTTP server on your LAN.
 
 ## Conformance
 
-<!-- conformance -->**218/218** checks passing<!-- /conformance -->
+<!-- conformance -->**220/220** checks passing<!-- /conformance -->
 
 ```bash
 npm install

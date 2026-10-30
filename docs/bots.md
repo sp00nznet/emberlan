@@ -253,31 +253,15 @@ Shared browser sessions for collaborative browsing.
 
 ### Game Together
 
-Play local multiplayer games together with virtual controllers.
-
-**Admin Setup:**
-1. Go to **Settings** → **Administration** → **Media Bots** → **Game Together**
-2. Enable the bot
-3. Install ViGEmBus driver on the gaming PC for virtual controller support
-
-**How It Works:**
-1. Host starts a Game Together session in a voice channel
-2. Host shares their screen showing the game
-3. Other users join as players (up to 4)
-4. Each player gets a virtual controller
-5. Players control the game using on-screen buttons or keyboard shortcuts
-
-**User Features:**
-- Virtual D-pad and buttons
-- Analog stick support
-- Works with any local multiplayer game
-- Real-time input synchronization
-- Up to 4 simultaneous players
+Play a host's local-multiplayer game with people in your voice channel: guests' controllers or
+phone touch pads become Xbox controllers on the host's PC. Not a bot that joins the channel; on by
+default, and the admin panel here only turns it off and lists sessions. Hosting needs the Windows
+desktop app with ViGEmBus installed. Full guide: [game-together.md](game-together.md).
 
 **Use Cases:**
 - Couch co-op games over the internet
 - Fighting games with friends
-- Local-multiplayer party games (Game Together, which does not yet drive real controllers; see [game-together.md](game-together.md))
+- Local-multiplayer party games ([game-together.md](game-together.md))
 - Any game with local multiplayer support
 
 ---

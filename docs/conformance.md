@@ -56,8 +56,20 @@ a 503 "not configured" counts as working.
 `SKIP ui`): loads the server-served UI in headless Chrome over the DevTools protocol and checks the
 login screen renders, the vendored libraries load, logging in through the form connects the socket,
 a text channel opens, a message typed in the chat box is stored and shown, the Game Together touch
-pad appears with no controller connected, two simultaneous touches press A and move the left stick,
-layout edits are saved, and no JavaScript error was thrown. This corpus exists because the static
+pad shows every control with no controller connected, two simultaneous touches press A and move the
+left stick, layout edits are saved, and no JavaScript error was thrown.
+
+In a second tab a second user joins voice and the corpus checks a real WebRTC call: connection,
+audio both ways, deafen, camera on and off, leaving. Then Game Together end to end:
+- The first tab hosts. It stands in for the desktop app by recording what would go to ViGEmBus, and
+  shares a canvas test game as its screen.
+- The second tab, emulating a phone, joins as Player 2 and sees the game in its play view.
+- Its touches arrive at the host as Player 2's A button and stick.
+- A connected controller takes over from the touch pad.
+- Leaving frees the virtual pad, and the host ending the session closes the play view.
+
+The contract corpus checks the desktop's input-to-Xbox-pad mapping (`electron-client/gamepads.js`)
+against a stand-in for ViGEmBus, and that a missing driver is reported instead of crashing. This corpus exists because the static
 and live checks passed while the real page had a CSP that blocked every script and button.
 
 ## Why mongodb-memory-server

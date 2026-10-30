@@ -77,7 +77,7 @@
   }
 
   function addHide(node) {
-    const x = el('button', 'tp-x', '×');
+    const x = el('button', 'tp-del', '×');
     x.addEventListener('pointerdown', (e) => {
       e.stopPropagation(); e.preventDefault();
       const c = cfg.controls[node.dataset.id];

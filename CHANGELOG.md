@@ -7,6 +7,12 @@ All notable changes to Emberlan are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Game Together works end to end. Guests' controllers or phone touch pads drive virtual Xbox
+  controllers (ViGEmBus) on the host's PC, created by the desktop app (`electron-client/gamepads.js`).
+  - Input goes peer to peer over a WebRTC data channel, never through the server.
+  - Guests get a full-screen play view of the host's screen share.
+  - One Game Together dialog (🎮 Play in the voice panel) replaces two half-finished flows.
+  - The harness plays a session across two tabs.
 - Voice, camera and screen share between users over WebRTC (`client/public/voice-rtc.js`): a
   mesh with perfect negotiation, so streams can be added or removed mid-call. Deafen and the
   speaker setting apply. The UI corpus now runs a two-user call with fake devices and checks audio
@@ -34,6 +40,11 @@ All notable changes to Emberlan are recorded here. The format follows
 - LICENSE, ROADMAP.md, SECURITY.md, CONTRIBUTING.md and this changelog.
 
 ### Changed
+- Game Together's server side only hands out seats. The virtual-controller backends that never
+  drove a device (ViGEm stub, in-memory uinput, foohid, mock) are gone, along with the
+  `gameTogether:input` socket event and `POST /api/admin/game-together/input`.
+- Docker: the server container no longer gets `/dev/uinput` or `SYS_ADMIN`.
+- Windows installer is x64 only (it now carries a native module).
 - Android moved to Capacitor 7 (JDK 21, Android SDK 35); the `mobile/android/` project is now
   committed, and cleartext HTTP is allowed for plain-HTTP LAN servers.
 - socket.io-client, hls.js and mpegts.js are vendored in `client/public/vendor/` instead of
@@ -50,6 +61,11 @@ All notable changes to Emberlan are recorded here. The format follows
   `GAME_TOGETHER.md` moved to `docs/game-together.md`.
 
 ### Fixed
+- Touch pad: the X button was never shown, because it shared the CSS class `tp-x` with the
+  edit-mode hide control. The harness now checks every control is visible.
+- Toasts no longer cover the touch pad during a game; one sat on the A button and swallowed presses.
+- Game Together events went to a Socket.IO room nobody was in (`<channelId>` instead of
+  `voice:<channelId>`), so nobody heard about sessions.
 - The UI read `state.user._id` but login returns `id`, so your own DMs showed as the other
   person's and the Play Together button showed on your own screen share. User objects now carry both.
 - Screen share and camera status updates on the server never ran (Mongoose queries are lazy).

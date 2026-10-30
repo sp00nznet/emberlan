@@ -27,6 +27,11 @@
     // ponytail: Android WebView has no screen-capture picker; returns none so the UI shows "no sources".
     getScreenSources: async () => [],
     selectFolder: async () => null,
+    // Phones join Game Together as players; hosting needs the Windows desktop app.
+    gamepad: {
+      status: async () => ({ available: false, error: 'Hosting needs the Emberlan desktop app on Windows' }),
+      set: noop, remove: noop, clear: noop,
+    },
     platform: 'android',
     version: 'capacitor'
   };

@@ -2,6 +2,12 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, globalShortcut, nativeImage, No
 const path = require('path');
 const Store = require('electron-store');
 const { spawn } = require('child_process');
+const { createGamepads } = require('./gamepads');
+
+// Game Together: virtual Xbox pads for guests. vigemclient is a native module (Windows only).
+let ViGEmClient = null;
+try { ViGEmClient = require('vigemclient'); } catch (e) { console.warn('vigemclient unavailable:', e.message); }
+const gamepads = createGamepads(ViGEmClient);
 
 // EMBERLAN_* env vars; the old F7LANS_* names still work.
 const env = (k) => process.env[`EMBERLAN_${k}`] ?? process.env[`F7LANS_${k}`];
@@ -263,6 +269,14 @@ function setupIPC() {
     return true;
   });
 
+  // Game Together host: guest input -> virtual pads (gamepads.js)
+  ipcMain.handle('gamepad-status', () => gamepads.status());
+  ipcMain.on('gamepad-set', (event, slot, input) => {
+    try { gamepads.set(slot, input); } catch (e) { console.error('gamepad-set:', e.message); }
+  });
+  ipcMain.on('gamepad-remove', (event, slot) => gamepads.remove(slot));
+  ipcMain.on('gamepad-clear', () => gamepads.clear());
+
   // Show notification
   ipcMain.on('show-notification', (event, { title, body }) => {
     showNotification(title, body);
@@ -480,6 +494,7 @@ app.on('before-quit', () => {
 
 // Unregister shortcuts on quit
 app.on('will-quit', () => {
+  gamepads.clear();
   globalShortcut.unregisterAll();
 });
 

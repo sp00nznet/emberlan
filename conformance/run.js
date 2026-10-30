@@ -83,7 +83,7 @@ const serverEmits = events(serverSrc, 'emit');
 const SOCKET_BUILTINS = new Set(['connect', 'disconnect', 'connect_error', 'error']);
 
 const bridgeKeys = (src) => new Set([...src.matchAll(/^\s{2,4}(\w+)\s*:/gm)].map((m) => m[1]));
-const clientBridgeUse = new Set([...app.matchAll(/electronAPI\.(\w+)/g)].map((m) => m[1]));
+const clientBridgeUse = new Set([...clientJs.matchAll(/electronAPI\??\.(\w+)/g)].map((m) => m[1]));
 
 // ---------- contract corpus ----------
 async function contract() {
@@ -115,6 +115,38 @@ async function contract() {
     await check(`contract/webrtc client handles ${e}`, () =>
       (clientEmits.has(e) && clientListens.has(e)) || 'client never sends/receives it, so no audio/video flows');
   }
+
+  // Game Together host: guest input -> virtual Xbox pad. A fake ViGEm records what the real one would get.
+  await check('contract/game together: desktop maps guest input onto a virtual Xbox pad', () => {
+    const made = [];
+    class FakeViGEm {
+      connect() { return null; }
+      createX360Controller() {
+        const pad = { button: {}, axis: {}, updates: 0, connected: false, connect() { this.connected = true; return null; }, update() { this.updates++; }, disconnect() { this.connected = false; } };
+        const val = (o, k) => { o[k] = { value: undefined, setValue(v) { this.value = v; } }; };
+        ['A', 'B', 'X', 'Y', 'LEFT_SHOULDER', 'RIGHT_SHOULDER', 'BACK', 'START', 'LEFT_THUMB', 'RIGHT_THUMB', 'GUIDE'].forEach((k) => val(pad.button, k));
+        ['leftX', 'leftY', 'rightX', 'rightY', 'leftTrigger', 'rightTrigger', 'dpadHorz', 'dpadVert'].forEach((k) => val(pad.axis, k));
+        made.push(pad);
+        return pad;
+      }
+    }
+    const g = require(path.join(ROOT, 'electron-client/gamepads.js')).createGamepads(FakeViGEm);
+    g.set(2, { buttons: { A: true, LB: true, DPAD_UP: true, DPAD_LEFT: true }, axes: { LEFT_X: 0.5, LEFT_Y: 1, RT: 0.75 } });
+    g.set(2, { buttons: { A: true, LB: true, DPAD_UP: true, DPAD_LEFT: true }, axes: { LEFT_X: 0.5, LEFT_Y: 1, RT: 0.75 } });
+    g.set(3, { buttons: {}, axes: {} });
+    const [p2, p3] = made;
+    const got = { pads: made.length, A: p2.button.A.value, B: p2.button.B.value, LB: p2.button.LEFT_SHOULDER.value, lx: p2.axis.leftX.value,
+      ly: p2.axis.leftY.value, rt: p2.axis.rightTrigger.value, dh: p2.axis.dpadHorz.value, dv: p2.axis.dpadVert.value, updates: p2.updates };
+    g.remove(2);
+    const ok = got.pads === 2 && got.A === true && got.B === false && got.LB === true && got.lx === 0.5 && got.ly === -1 &&
+      got.rt === 0.75 && got.dh === -1 && got.dv === 1 && got.updates === 2 && !p2.connected && p3.connected && !!g.status().available;
+    return ok || JSON.stringify(got);
+  });
+  await check('contract/game together: desktop reports a missing ViGEmBus instead of failing', () => {
+    class NoBus { connect() { return new Error('VIGEM_ERROR_BUS_NOT_FOUND'); } }
+    const st = require(path.join(ROOT, 'electron-client/gamepads.js')).createGamepads(NoBus).status();
+    return (!st.available && /ViGEmBus is not installed/.test(st.error)) || JSON.stringify(st);
+  });
 
   // Parity: one UI source, two native shells exposing the same bridge.
   const preload = bridgeKeys(read('electron-client/preload.js'));
@@ -324,6 +356,8 @@ async function uiFlow(base, http) {
   const br = spawn(bin, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--disable-extensions', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
     '--autoplay-policy=no-user-gesture-required',
+    // Both tabs run at full speed (the host tab draws and streams a game while the guest tab is in front).
+    '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
     `--user-data-dir=${profile}`, `--remote-debugging-port=${cdpPort}`, 'about:blank']);
   const errors = [];
   const sockets = [];
@@ -404,6 +438,12 @@ async function uiFlow(base, http) {
       await evaluate(`localStorage.removeItem('emberlan-touchpad'); touchPad.start()`);
       return (await evaluate(`touchPad.visible && getComputedStyle(document.getElementById('touchPad')).display !== 'none'`)) || 'pad not shown';
     });
+    await check('ui/touch pad: every control is on screen (sticks, d-pad, ABXY, bumpers, triggers, back, start)', async () => {
+      const shown = await evaluate(`[...document.querySelectorAll('#touchPad .tp-ctl')].filter((c) => { const r = c.getBoundingClientRect(); return r.width > 0 && getComputedStyle(c).display !== 'none'; }).map((c) => c.dataset.id)`);
+      const want = ['LSTICK', 'RSTICK', 'DPAD', 'A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'BACK', 'START'];
+      const missing = want.filter((w) => !shown.includes(w));
+      return !missing.length || `not visible: ${missing.join(', ')}`;
+    });
     await check('ui/touch pad: two fingers press A and push the left stick at once', async () => {
       const a = await center('.tp-a'), s = await center('[data-id="LSTICK"]');
       await touch('touchStart', [{ ...a, id: 1 }, { x: s.x + 60, y: s.y, id: 2 }]);
@@ -413,7 +453,6 @@ async function uiFlow(base, http) {
       const after = await evaluate('touchPad.read()');
       return (r?.buttons.A === true && r.axes.LEFT_X > 0.5 && after.buttons.A === false && after.axes.LEFT_X === 0) || JSON.stringify({ r, after });
     });
-    await shot('android-touchpad.png');
     await check('ui/touch pad: layout edits are saved', async () => {
       await evaluate(`document.querySelector('.tp-bar .tp-tool').click()`);
       const a = await center('.tp-a');
@@ -424,7 +463,7 @@ async function uiFlow(base, http) {
       const saved = await evaluate(`JSON.parse(localStorage.getItem('emberlan-touchpad'))?.controls?.A`);
       return (saved && saved.x < 80) || `saved: ${JSON.stringify(saved)}`;
     });
-    await evaluate('touchPad.stop()');
+    await evaluate(`touchPad.stop(); localStorage.removeItem('emberlan-touchpad')`); // back to the default layout
 
     // Voice and video between two real users in two tabs (fake mic and camera).
     await send('Emulation.clearDeviceMetricsOverride');
@@ -476,6 +515,95 @@ async function uiFlow(base, http) {
       await evaluate('toggleCamera()');
       return (await page2.waitFor(`!document.querySelector('video[id^="video-remote-"]')`, 10000)) || 'remote tile still there';
     });
+    // Game Together, end to end: admin hosts, alice plays from a phone-sized touch screen.
+    // The host tab stands in for the desktop app: electronAPI.gamepad records what would go to
+    // ViGEmBus (the mapping itself is checked in the contract corpus), and a canvas test game,
+    // shared as the host's screen, moves Player 2 with the input it receives.
+    await evaluate(`(() => {
+      window.__pads = []; window.__removed = [];
+      const gamepad = { status: async () => ({ available: true }), clear() {},
+        set: (slot, input) => { window.__pads.push([slot, input]); window.__last = { slot, input }; },
+        remove: (slot) => window.__removed.push(slot) };
+      window.electronAPI = new Proxy({ gamepad }, { get: (t, k) => (k in t ? t[k] : () => {}) });
+      const c = document.createElement('canvas'); c.width = 1280; c.height = 720;
+      const g = c.getContext('2d'); const p2 = { x: 860, y: 400 };
+      const dot = (x, y, col, label, ring) => {
+        g.fillStyle = col; g.beginPath(); g.arc(x, y, 34, 0, 7); g.fill();
+        if (ring) { g.strokeStyle = '#fff'; g.lineWidth = 6; g.beginPath(); g.arc(x, y, 48, 0, 7); g.stroke(); }
+        g.fillStyle = '#0c0b0a'; g.font = 'bold 26px sans-serif'; g.textAlign = 'center'; g.fillText(label, x, y + 9);
+      };
+      setInterval(() => {
+        const i = window.__last?.slot === 2 && window.__last.input;
+        if (i) { p2.x = Math.max(60, Math.min(1220, p2.x + i.axes.LEFT_X * 10)); p2.y = Math.max(120, Math.min(660, p2.y + i.axes.LEFT_Y * 10)); }
+        const sky = g.createLinearGradient(0, 0, 0, 720); sky.addColorStop(0, '#1d2b3a'); sky.addColorStop(1, '#3a2418');
+        g.fillStyle = sky; g.fillRect(0, 0, 1280, 720);
+        g.fillStyle = 'rgba(255,255,255,0.06)';
+        for (let x = 0; x < 1280; x += 80) g.fillRect(x, 0, 2, 720);
+        for (let y = 0; y < 720; y += 80) g.fillRect(0, y, 1280, 2);
+        g.fillStyle = '#f4efe8'; g.font = '600 30px sans-serif'; g.textAlign = 'left';
+        g.fillText('Harness test game, streamed from the host over WebRTC', 40, 690);
+        dot(420, 400, '#ff6a2b', 'P1', false);
+        dot(p2.x, p2.y, '#4fd1c5', 'P2', !!(i && i.buttons.A));
+      }, 33);
+      window.__game = c.captureStream(30);
+    })()`);
+    const centerOn = (pg, sel) => pg.evaluate(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const touch2 = (type, pts) => page2.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+    await check('ui/game together: host starts a session with their game shared', async () => {
+      await evaluate(`startScreenShare(window.__game, 'screen-game', 'Harness game')`);
+      await evaluate('gameTogether.host()');
+      return (await waitFor('gameTogether.session?.players.length === 1')) || JSON.stringify(await evaluate('gameTogether.session'));
+    });
+    // The guest is on a phone (touch screen) from here on, so joining brings up the touch pad.
+    await page2.send('Emulation.setDeviceMetricsOverride', { width: 860, height: 400, deviceScaleFactor: 2, mobile: true });
+    await page2.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+    await check('ui/game together: guest sees the session and joins as Player 2', async () => {
+      if (!(await page2.waitFor('!!gameTogether.session'))) return 'session-started never reached the guest';
+      await page2.evaluate('gameTogether.join()');
+      const ok = await page2.waitFor(`gameTogether.slot === 2 && !!document.getElementById('gtPlay')`);
+      const hostSees = await waitFor('gameTogether.session?.players.length === 2');
+      return (ok && hostSees) || `guest slot:${await page2.evaluate('gameTogether.slot')} host players:${await evaluate('gameTogether.session?.players.length')}`;
+    });
+    await check('ui/game together: the guest play view shows the host game stream', async () =>
+      (await page2.waitFor(`document.querySelector('#gtPlay .gt-screen').videoWidth > 0`, 15000)) || 'no video in the play view');
+    await check('ui/game together: touch pad input reaches the host as Player 2 (A + left stick)', async () => {
+      const a = await centerOn(page2, '.tp-a'), st = await centerOn(page2, '[data-id="LSTICK"]');
+      await touch2('touchStart', [{ ...a, id: 1 }, { x: st.x + 60, y: st.y - 20, id: 2 }]);
+      const got = await waitFor(`window.__pads.some(([s, i]) => s === 2 && i.buttons.A && i.axes.LEFT_X > 0.5)`);
+      await sleep(700); // let Player 2 move on the host screen and the frame come back
+      await shot('android-touchpad.png', page2);
+      await touch2('touchEnd', []);
+      const released = await waitFor(`window.__last?.slot === 2 && !window.__last.input.buttons.A && window.__last.input.axes.LEFT_X === 0`);
+      return (got && released) || `pressed seen:${got} release seen:${released} at A:${await page2.evaluate(`(() => { const e = document.elementFromPoint(${a.x}, ${a.y}); return e.className + '/' + e.parentElement?.className; })()`)} a:${JSON.stringify(a)}`;
+    });
+    await check('ui/game together: a connected controller takes over from the touch pad', async () => {
+      await page2.evaluate(`(() => {
+        const pad = { index: 0, id: 'Harness pad', connected: true, axes: [0, -1, 0, 0],
+          buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === 1, value: i === 1 ? 1 : 0 })) };
+        navigator.getGamepads = () => [pad];
+        dispatchEvent(new Event('gamepadconnected'));
+      })()`);
+      const hidden = await page2.waitFor('!touchPad.visible');
+      const got = await waitFor(`window.__last?.slot === 2 && window.__last.input.buttons.B && window.__last.input.axes.LEFT_Y === -1`);
+      await page2.evaluate(`navigator.getGamepads = () => []; dispatchEvent(new Event('gamepaddisconnected'))`);
+      const back = await page2.waitFor('touchPad.visible');
+      return (hidden && got && back) || JSON.stringify({ touchPadHidden: hidden, padInputSeen: got, touchPadBack: back });
+    });
+    await check('ui/game together: guest leaving frees their virtual pad on the host', async () => {
+      await page2.evaluate('gameTogether.leave()');
+      const removed = await waitFor('window.__removed.includes(2)');
+      const closed = await page2.waitFor(`!document.getElementById('gtPlay')`);
+      return (removed && closed) || JSON.stringify({ removed, closed });
+    });
+    await check('ui/game together: host ending the session closes the guest play view', async () => {
+      await page2.evaluate('gameTogether.join()');
+      if (!(await page2.waitFor(`!!document.getElementById('gtPlay')`))) return 'guest could not rejoin';
+      await evaluate('gameTogether.leave()');
+      return (await page2.waitFor(`!document.getElementById('gtPlay') && !gameTogether.session`)) || 'guest still in the play view';
+    });
+    await page2.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await evaluate(`stopScreenShare('screen-game')`);
+
     await check('ui/voice: leaving ends the call for the other user', async () => {
       await evaluate('leaveVoice()');
       return (await page2.waitFor('rtc.peers().length === 0', 10000)) || JSON.stringify(await page2.evaluate('rtc.peers()'));

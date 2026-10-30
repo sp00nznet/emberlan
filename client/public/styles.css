@@ -884,10 +884,10 @@ body {
 .tp-dpad { width: 120px; height: 120px; border-radius: 16px; background: transparent; border: none; position: absolute; }
 .tp-dir { position: absolute; width: 40px; height: 40px; background: rgba(255, 106, 43, .14); border: 2px solid var(--accent-primary, #FF6A2B); border-radius: 8px; pointer-events: none; }
 .tp-up { left: 40px; top: 0; } .tp-down { left: 40px; bottom: 0; } .tp-left { left: 0; top: 40px; } .tp-right { right: 0; top: 40px; }
-.tp-x { display: none; position: absolute; top: -10px; right: -10px; width: 24px; height: 24px; border-radius: 50%;
+.tp-del { display: none; position: absolute; top: -10px; right: -10px; width: 24px; height: 24px; border-radius: 50%;
   border: none; background: var(--bg-input, #1B1916); color: #FFD3A6; font-size: 16px; line-height: 24px; padding: 0; }
 .tp-editing .tp-ctl { outline: 2px dashed #FFD3A6; outline-offset: 4px; }
-.tp-editing .tp-x { display: block; }
+.tp-editing .tp-del { display: block; }
 .tp-editing .tp-hidden { opacity: .2; }
 .tp-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); pointer-events: auto; display: flex; gap: 8px; align-items: center;
   background: var(--bg-card, #15130F); border: 1px solid rgba(255, 106, 43, .3); border-radius: 10px; padding: 6px 10px;
@@ -898,3 +898,28 @@ body {
 .tp-tool { background: none; border: 1px solid var(--accent-primary, #FF6A2B); color: #FF8A3D; border-radius: 6px; padding: 4px 8px; font: inherit; }
 .tp-fab { position: fixed; right: 16px; bottom: 16px; z-index: 900; width: 52px; height: 52px; border-radius: 50%;
   border: 2px solid var(--accent-primary, #FF6A2B); background: var(--bg-card, #15130F); font-size: 24px; }
+
+/* ===== Game Together (gametogether.js) ===== */
+.gt-play { position: fixed; inset: 0; z-index: 850; background: #000; display: flex; align-items: center; justify-content: center; }
+.gt-screen { width: 100%; height: 100%; object-fit: contain; display: none; }
+.gt-play.gt-has-video .gt-screen { display: block; }
+.gt-play.gt-has-video .gt-wait { display: none; }
+.gt-wait { color: var(--txt-2); font-family: var(--font-ui); font-size: 15px; padding: 24px; text-align: center; }
+.gt-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 12px; padding: 8px 12px;
+  background: linear-gradient(rgba(0,0,0,0.65), transparent); font-family: var(--font-ui); color: var(--txt-1); font-size: 13px; }
+.gt-title { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gt-status { color: var(--ember-light); font-family: var(--font-mono); font-size: 11px; }
+.gt-btn, .gt-tile-btn { background: rgba(26,23,20,0.85); border: 1px solid var(--ember); color: var(--ember-light); border-radius: var(--radius-sm);
+  padding: 6px 12px; font: 600 12px var(--font-ui); cursor: pointer; }
+.gt-btn:hover, .gt-tile-btn:hover { background: var(--ember); color: var(--bg-stage); }
+.gt-tile-btn { position: absolute; top: 8px; right: 8px; }
+.gt-seats { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 12px 0 16px; padding: 0; }
+.gt-seat { background: var(--surface); border: 1px dashed var(--line-2); border-radius: var(--radius-sm); padding: 10px 12px; color: var(--txt-2); font-size: 13px; }
+.gt-seat.taken { border-style: solid; border-color: var(--ember); color: var(--txt-1); }
+.gt-seat b { color: var(--ember); font-family: var(--font-mono); margin-right: 6px; }
+.gt-hint { color: var(--txt-2); font-size: 13px; line-height: 1.5; margin-bottom: 14px; }
+.gt-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+/* Toasts must never swallow a touch on the pad mid-game. */
+body.gt-playing .toast-container, body.gt-playing .toast-container * { pointer-events: none; }
+body.gt-playing .toast-container { top: 52px; bottom: auto; opacity: 0.9; }
+body.gt-playing .toast { padding: 8px 14px; font-size: 13px; }
