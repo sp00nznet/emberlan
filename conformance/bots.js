@@ -352,7 +352,7 @@ async function live({ check, http: api, sock, once, admin, alice, bob, sa, sb, v
   // ---------- settings survive a restart ----------
   await api('POST', '/api/admin/emby-bot/disconnect', admin);
   await check('bots/settings survive a server restart (and a disconnect stays disconnected)', async () => {
-    if (!(await restart())) return 'server did not come back';
+    if (!(await restart())) return 'server hung on shutdown or did not come back';
     const st = {};
     for (const t of ['plex', 'jellyfin', 'emby', 'iptv', 'youtube']) st[t] = (await api('GET', `/api/admin/${t}-bot/status`, admin)).json;
     const ok = st.plex?.connected && st.plex.enabled && st.jellyfin?.connected && st.emby && !st.emby.configured &&

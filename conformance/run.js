@@ -229,9 +229,12 @@ async function live() {
   const restart = async () => {
     const exited = new Promise((r) => srv.once('exit', r));
     srv.kill();
+    let hung = false; // a shutdown that hangs is a failure, but still restart so the run ends
+    const t = setTimeout(() => { hung = true; srv.kill('SIGKILL'); }, 8000);
     await exited;
+    clearTimeout(t);
     startServer();
-    return waitUp();
+    return (await waitUp()) && !hung;
   };
   startServer();
 

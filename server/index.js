@@ -298,29 +298,15 @@ const startServer = async () => {
 
 startServer();
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-
-  if (federationService) {
-    await federationService.shutdown();
-    console.log('Federation connections closed');
-  }
-
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, shutting down gracefully...');
-  if (federationService) {
-    await federationService.shutdown();
-  }
-  server.close(() => {
-    process.exit(0);
-  });
-});
+// Graceful shutdown. io.close() also closes the HTTP server and drops socket clients, which
+// would otherwise keep server.close() waiting forever; the timer is the backstop.
+const shutdown = async (sig) => {
+  console.log(`${sig} received, shutting down...`);
+  setTimeout(() => process.exit(0), 5000).unref();
+  if (federationService) await federationService.shutdown().catch(() => {});
+  io.close(() => process.exit(0));
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 module.exports = { app, server, io, federationService };
