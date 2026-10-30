@@ -15,7 +15,7 @@ node conformance/run.js --accept   # run, then write the baseline, a history row
 node conformance/run.js --screenshots   # also save docs/screenshots/desktop-chat.png and android-touchpad.png
 ```
 
-Current figure: 201/204. The three failures are the `contract/webrtc` checks.
+Current figure: 218/218.
 
 Real tail of a `--static` run (2026-10-29, while this doc was missing):
 
@@ -34,7 +34,7 @@ conformance: 151/155 passing
 |---|---|
 | `contract/api` | Every `/api/...` URL in `client/public/app.js`, with its HTTP method, matches a `router.<method>(...)` in `server/routes/api.js`. One extra check fails if any `fetch()` uses a relative `/api/` URL, because desktop and Android have no same origin. |
 | `contract/socket` | Every event the client emits has a `socket.on` in `server/socket/socketHandler.js`; every event the client listens for is emitted somewhere in `server/`. |
-| `contract/webrtc` | The client both sends and handles `webrtc:offer`, `webrtc:answer` and `webrtc:ice-candidate`. These three fail today: no voice/video media flows. |
+| `contract/webrtc` | The client both sends and handles `webrtc:offer`, `webrtc:answer` and `webrtc:ice-candidate`. (The `ui/voice` and `ui/video` checks prove media actually flows.) |
 | `contract/no function is defined twice` | Fails on duplicate function names in `app.js`; a later definition silently wins (a duplicate `loadChannels()` once stopped channels and DMs loading). |
 | `contract/UI loads no scripts from a CDN` | The UI must work offline in the desktop and Android shells, and the CSP blocks CDN scripts. |
 | `parity/bridge` | Every `electronAPI.<fn>` the UI uses exists in both `electron-client/preload.js` and `mobile/native-bridge.js`. |
@@ -73,7 +73,7 @@ counts.
 
 - `conformance/results.json` maps each check id to `true`/`false`. A check that is `true` there,
   ran this time and failed is a **regression**: the run lists it and exits 1.
-- New checks and checks that were already failing never cause exit 1, so a known gap (WebRTC)
+- New checks and checks that were already failing never cause exit 1, so a known gap
   does not block work while it stays visible in the total.
 - `--accept` rewrites the baseline, appends `date,commit,pass,total` to `conformance/history.csv`
   and replaces the README text between `<!-- conformance -->` and `<!-- /conformance -->`.

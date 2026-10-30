@@ -42,6 +42,9 @@ async function check(id, fn) {
 
 // ---------- source extraction ----------
 const app = read('client/public/app.js');
+// All of the UI's own scripts (not vendor/): app.js, touchpad.js, voice-rtc.js.
+const clientJs = fs.readdirSync(path.join(ROOT, 'client/public')).filter((f) => f.endsWith('.js'))
+  .map((f) => read(path.join('client/public', f))).join('\n');
 const serverSrc = fs.readdirSync(path.join(ROOT, 'server'), { recursive: true })
   .filter((f) => f.endsWith('.js'))
   .map((f) => read(path.join('server', f)))
@@ -73,8 +76,8 @@ const routeMatches = (call, route) => {
 };
 
 const events = (src, verb) => new Set([...src.matchAll(new RegExp(`\\.${verb}\\(\\s*['"]([\\w:-]+)['"]`, 'g'))].map((m) => m[1]));
-const clientEmits = events(app, 'emit');
-const clientListens = events(app, 'on');
+const clientEmits = events(clientJs, 'emit');
+const clientListens = events(clientJs, 'on');
 const serverListens = events(read('server/socket/socketHandler.js'), 'on');
 const serverEmits = events(serverSrc, 'emit');
 const SOCKET_BUILTINS = new Set(['connect', 'disconnect', 'connect_error', 'error']);
@@ -149,6 +152,12 @@ async function contract() {
   }
 }
 
+// Ask the OS for a free port: random picks can land in ranges Windows reserves (Hyper-V).
+const freePort = () => new Promise((res, rej) => {
+  const srv = require('net').createServer().listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => res(port)); });
+  srv.on('error', rej);
+});
+
 // ---------- live corpus ----------
 async function live() {
   let MongoMemoryServer, ioc;
@@ -160,7 +169,7 @@ async function live() {
     return;
   }
   const mongo = await MongoMemoryServer.create();
-  const port = 40000 + Math.floor(Math.random() * 20000);
+  const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const log = [];
   const srv = spawn(process.execPath, ['server/index.js'], {
@@ -310,19 +319,19 @@ async function uiFlow(base, http) {
   if (!bin) { console.log('SKIP ui - no Chrome/Edge found (set CHROME_PATH)'); return; }
   const os = require('os');
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'emberlan-ui-'));
-  const cdpPort = 9300 + Math.floor(Math.random() * 500);
+  const cdpPort = await freePort();
+  // Fake mic/camera and no permission prompts, so voice and video run headless.
   const br = spawn(bin, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-    '--disable-extensions', `--user-data-dir=${profile}`, `--remote-debugging-port=${cdpPort}`, 'about:blank']);
+    '--disable-extensions', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
+    '--autoplay-policy=no-user-gesture-required',
+    `--user-data-dir=${profile}`, `--remote-debugging-port=${cdpPort}`, 'about:blank']);
   const errors = [];
-  let ws;
-  try {
-    let target;
-    for (let i = 0; i < 50 && !target; i++) {
-      try { target = (await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json()).find((t) => t.type === 'page'); }
-      catch { await new Promise((r) => setTimeout(r, 200)); }
-    }
-    if (!target) return record('ui/browser starts', false, bin);
-    ws = new WebSocket(target.webSocketDebuggerUrl);
+  const sockets = [];
+
+  // One DevTools connection per tab: send / evaluate / waitFor.
+  async function connect(target) {
+    const ws = new WebSocket(target.webSocketDebuggerUrl);
+    sockets.push(ws);
     await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
     let id = 0; const pending = new Map();
     ws.onmessage = (ev) => {
@@ -339,14 +348,28 @@ async function uiFlow(base, http) {
       return false;
     };
     await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
+    return { send, evaluate, waitFor };
+  }
+  // Log in through the real form. rememberMe off so tabs don't share a saved session.
+  const login = (pg, user, pass) => pg.evaluate(`(() => { username.value = ${JSON.stringify(user)}; password.value = ${JSON.stringify(pass)};
+    rememberMe.checked = false; connectionForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); })()`);
+
+  try {
+    let target;
+    for (let i = 0; i < 50 && !target; i++) {
+      try { target = (await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json()).find((t) => t.type === 'page'); }
+      catch { await new Promise((r) => setTimeout(r, 200)); }
+    }
+    if (!target) return record('ui/browser starts', false, bin);
+    const page1 = await connect(target);
+    const { send, evaluate, waitFor } = page1;
     await send('Page.navigate', { url: base + '/' });
 
     await check('ui/login screen renders', () => waitFor(`!!document.getElementById('connectionForm') && document.readyState === 'complete'`) || 'no login form');
     await check('ui/vendored libraries load (socket.io, hls, mpegts)', async () =>
       (await evaluate(`typeof io === 'function' && typeof Hls !== 'undefined' && typeof mpegts !== 'undefined'`)) || 'a library is missing');
     await check('ui/login via the form reaches the app and connects the socket', async () => {
-      await evaluate(`(() => { username.value = 'admin'; password.value = 'admin123';
-        connectionForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); })()`);
+      await login(page1, 'admin', 'admin123');
       return (await waitFor(`getComputedStyle(connectionScreen).display === 'none' && !!(state.socket && state.socket.connected)`)) || 'still on login or socket not connected';
     });
     await check('ui/opens a text channel', async () =>
@@ -362,9 +385,9 @@ async function uiFlow(base, http) {
       const list = Array.isArray(r.json) ? r.json : r.json?.messages || [];
       return (shown && list.some((m) => m.content === text)) || `shown:${shown} stored:${list.some((m) => m.content === text)}`;
     });
-    const shot = async (name) => {
+    const shot = async (name, pg = page1) => {
       if (!args.has('--screenshots')) return;
-      const { result } = await send('Page.captureScreenshot', { format: 'png' });
+      const { result } = await pg.send('Page.captureScreenshot', { format: 'png' });
       fs.mkdirSync(path.join(ROOT, 'docs/screenshots'), { recursive: true });
       fs.writeFileSync(path.join(ROOT, 'docs/screenshots', name), Buffer.from(result.data, 'base64'));
     };
@@ -403,9 +426,65 @@ async function uiFlow(base, http) {
     });
     await evaluate('touchPad.stop()');
 
+    // Voice and video between two real users in two tabs (fake mic and camera).
+    await send('Emulation.clearDeviceMetricsOverride');
+    await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    const t2 = await (await fetch(`http://127.0.0.1:${cdpPort}/json/new?about:blank`, { method: 'PUT' })).json();
+    const page2 = await connect(t2);
+    await page2.send('Page.navigate', { url: base + '/' });
+    await page2.waitFor(`!!document.getElementById('connectionForm') && document.readyState === 'complete'`);
+    await login(page2, 'alice', 'password1');
+    const p2ok = await page2.waitFor(`!!(state.socket && state.socket.connected && state.channels?.length)`);
+    const vc = await evaluate(`state.channels.find((c) => c.type === 'voice')._id`);
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    await check('ui/voice: two users in a voice channel get a connected WebRTC call', async () => {
+      if (!p2ok) return 'second user never logged in';
+      await evaluate(`joinVoice(${JSON.stringify(vc)})`);
+      await sleep(500);
+      await page2.evaluate(`joinVoice(${JSON.stringify(vc)})`);
+      const a = await waitFor(`rtc.peers().some((p) => p.state === 'connected')`, 15000);
+      const b = await page2.waitFor(`rtc.peers().some((p) => p.state === 'connected')`, 15000);
+      return (a && b) || `admin:${JSON.stringify(await evaluate('rtc.peers()'))} alice:${JSON.stringify(await page2.evaluate('rtc.peers()'))}`;
+    });
+    await check('ui/voice: audio from each user reaches the other', async () => {
+      // Unmute both (the default voice mode may start muted) so real audio, not silence, is sent.
+      for (const pg of [page1, page2]) await pg.evaluate(`state.isMuted && toggleMute()`);
+      const before = [await evaluate('rtc.stats()'), await page2.evaluate('rtc.stats()')];
+      await sleep(1500);
+      const after = [await evaluate('rtc.stats()'), await page2.evaluate('rtc.stats()')];
+      const grew = after.map((s, i) => s.audio - before[i].audio);
+      const playing = await page2.evaluate(`[...document.querySelectorAll('audio.rtc-audio')].some((a) => a.srcObject?.getAudioTracks()[0]?.readyState === 'live' && !a.paused)`);
+      return (grew.every((g) => g > 2000) && playing) || `audio bytes/1.5s admin<-alice:${grew[0]} alice<-admin:${grew[1]} alice playing:${playing}`;
+    });
+    await check('ui/voice: deafen silences what you hear', async () => {
+      await page2.evaluate('toggleDeafen()');
+      const muted = await page2.evaluate(`[...document.querySelectorAll('audio.rtc-audio')].every((a) => a.muted)`);
+      await page2.evaluate('toggleDeafen()');
+      const back = await page2.evaluate(`[...document.querySelectorAll('audio.rtc-audio')].every((a) => !a.muted)`);
+      return (muted && back) || `deafened muted:${muted} undeafened audible:${back}`;
+    });
+    await check('ui/video: turning on a camera shows it to the other user', async () => {
+      await evaluate('toggleCamera()');
+      const seen = await page2.waitFor(`[...document.querySelectorAll('video[id^="video-remote-"]')].some((v) => v.videoWidth > 0)`, 15000);
+      return seen || `alice tiles: ${await page2.evaluate(`[...document.querySelectorAll('video')].map((v) => v.id + ':' + v.videoWidth).join(',')`)}`;
+    });
+    await page2.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    await sleep(800);
+    await shot('desktop-voice-video.png', page2);
+    await check('ui/video: turning the camera off removes it for the other user', async () => {
+      await evaluate('toggleCamera()');
+      return (await page2.waitFor(`!document.querySelector('video[id^="video-remote-"]')`, 10000)) || 'remote tile still there';
+    });
+    await check('ui/voice: leaving ends the call for the other user', async () => {
+      await evaluate('leaveVoice()');
+      return (await page2.waitFor('rtc.peers().length === 0', 10000)) || JSON.stringify(await page2.evaluate('rtc.peers()'));
+    });
+    await page2.evaluate('leaveVoice()');
+
     await check('ui/no JavaScript errors during the flow', () => !errors.length || errors.slice(0, 5).join(' | '));
   } finally {
-    try { ws?.close(); } catch {}
+    for (const w of sockets) { try { w.close(); } catch {} }
     br.kill();
     await new Promise((r) => setTimeout(r, 500));
     try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}

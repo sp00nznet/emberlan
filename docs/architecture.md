@@ -77,8 +77,13 @@ Desktop and Android have no same origin, so every request is built from `state.s
 - **DMs** are encrypted in the client; the server stores `encryptedContent`, `iv` and
   `encryptedKey` (`server/models/DirectMessage.js`) and relays them to `user:<recipient>`.
 - **Voice/video:** the server tracks voice room membership and relays WebRTC signaling between
-  peers. The client does not yet send or handle `webrtc:*`, so no media flows (see
-  [ROADMAP.md](../ROADMAP.md)).
+  peers (`webrtc:offer|answer|ice-candidate`, plus a `meta` map that says which stream is a camera
+  and which a screen share). Media goes peer to peer, never through the server:
+  `client/public/voice-rtc.js` keeps one `RTCPeerConnection` per other user in the channel (a
+  full mesh) and uses the "perfect negotiation" pattern, so cameras and screen shares can be added
+  or removed at any time by either side without signaling races. Joining a channel connects to
+  everyone in `voice:currentUsers`; `voice:userLeft` closes that peer. STUN only, no TURN; a
+  mesh suits about 8 people, larger rooms would need an SFU.
 - **Federation:** servers link over HTTP and Socket.IO with HMAC-SHA256 signed requests
   (`server/config/federation.js`, `server/services/federationService.js`). See
   [federation.md](federation.md).

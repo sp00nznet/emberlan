@@ -91,6 +91,14 @@ const state = {
   publicKeyCache: {} // Cache of other users' public keys
 };
 
+// Login returns the public profile ({ id }); /auth/me returns the document ({ _id }).
+// The UI compares against _id everywhere, so give every user object both.
+function withId(user) {
+  if (user && !user._id && user.id) user._id = user.id;
+  if (user && !user.id && user._id) user.id = user._id;
+  return user;
+}
+
 // ==================== E2E Encryption Utilities ====================
 
 // Generate RSA key pair for E2E encryption
@@ -325,7 +333,7 @@ async function setupGoogleAuth() {
       });
       if (meRes.ok) {
         const data = await meRes.json();
-        state.user = data.user;
+        state.user = withId(data.user);
         if (window.electronAPI) {
           await window.electronAPI.saveToken(token);
         } else {
@@ -555,7 +563,7 @@ async function tryAutoLogin() {
 
     if (response.ok) {
       const data = await response.json();
-      state.user = data.user;
+      state.user = withId(data.user);
       showMainApp();
       connectSocket();
     } else {
@@ -614,7 +622,7 @@ async function handleConnect(e) {
     }
 
     // Save credentials
-    state.user = data.user;
+    state.user = withId(data.user);
     state.token = data.token;
     state.serverUrl = cleanUrl;
 
@@ -648,6 +656,15 @@ function connectSocket() {
     auth: { token: state.token },
     transports: ['websocket', 'polling']
   });
+
+  // Voice/camera/screen media (voice-rtc.js).
+  window.rtc.attach(state.socket);
+  window.rtc.onRemoteVideo = (peerId, stream, meta) => {
+    const who = state.voiceNames?.[peerId] || 'Someone';
+    const label = meta.kind === 'screen' ? `${who}: ${meta.label || 'Screen'}` : who;
+    addVideoToGrid(`remote-${stream.id}`, stream, label, false, false, meta.kind === 'screen', peerId);
+  };
+  window.rtc.onRemoteVideoGone = (peerId, streamId) => removeVideoFromGrid(`remote-${streamId}`);
 
   state.socket.on('connect', () => {
     console.log('Connected to Emberlan server');
@@ -697,6 +714,7 @@ function connectSocket() {
 
   // Voice handlers
   state.socket.on('voice:userJoined', (data) => {
+    state.voiceNames = { ...state.voiceNames, [String(data.userId)]: data.user?.displayName || data.user?.username };
     showToast(`${data.user.displayName || data.user.username} joined voice`, 'info');
     playVoiceNotification('join');
     renderVoiceUsers();
@@ -704,12 +722,21 @@ function connectSocket() {
   });
 
   state.socket.on('voice:userLeft', (data) => {
+    window.rtc.peerLeft(data.userId);
     playVoiceNotification('leave');
     renderVoiceUsers();
     loadChannels();
   });
 
   state.socket.on('voice:currentUsers', (data) => {
+    const users = (data.users || []).map((u) => u.user).filter(Boolean);
+    state.voiceNames = Object.fromEntries(users.map((u) => [String(u._id), u.displayName || u.username]));
+    // We just joined: connect media to everyone already here, and share any camera/screen already on.
+    if (state.inVoice) {
+      window.rtc.join(state.user._id, users, state.localStream);
+      if (state.cameraStream) window.rtc.addStream(state.cameraStream, { kind: 'camera' });
+      for (const [id, st] of Object.entries(state.screenStreams)) window.rtc.addStream(st, { kind: 'screen', label: id });
+    }
     renderVoiceUsers(data.users);
   });
 
@@ -1493,6 +1520,7 @@ async function joinVoice(channelId) {
 
     state.inVoice = true;
     state.voiceChannel = channel;
+    window.rtc.setOutputDevice(state.settings.audioOutputDevice);
 
     state.socket.emit('voice:join', channelId);
 
@@ -1514,6 +1542,7 @@ async function joinVoice(channelId) {
 }
 
 function leaveVoice() {
+  window.rtc.leave();
   if (state.localStream) {
     state.localStream.getTracks().forEach(t => t.stop());
     state.localStream = null;
@@ -1561,6 +1590,7 @@ function toggleDeafen() {
   if (state.isDeafened && !state.isMuted) {
     toggleMute();
   }
+  window.rtc.setDeafened(state.isDeafened);
 
   if (state.socket && state.inVoice) {
     state.socket.emit('voice:deafen', state.isDeafened);
@@ -1618,6 +1648,8 @@ async function toggleCamera() {
         state.socket.emit('camera:toggle', true);
       }
 
+      if (state.inVoice) window.rtc.addStream(stream, { kind: 'camera' });
+
       // Add video to grid
       addVideoToGrid('local-camera', stream, state.user?.displayName || 'You', true);
 
@@ -1635,6 +1667,7 @@ async function toggleCamera() {
   } else {
     // Stop camera
     if (state.cameraStream) {
+      window.rtc.removeStream(state.cameraStream);
       state.cameraStream.getTracks().forEach(track => track.stop());
       state.cameraStream = null;
     }
@@ -1970,6 +2003,7 @@ async function selectScreenSource(sourceId) {
 function startScreenShare(stream, shareId, label = 'Your Screen') {
   state.screenStreams[shareId] = stream;
   state.isScreenSharing = Object.keys(state.screenStreams).length > 0;
+  if (state.inVoice) window.rtc.addStream(stream, { kind: 'screen', label });
 
   if (state.socket) {
     state.socket.emit('screen:start', { shareId, label });
@@ -1993,6 +2027,7 @@ function stopScreenShare(shareId) {
   if (shareId) {
     // Stop specific share
     if (state.screenStreams[shareId]) {
+      window.rtc.removeStream(state.screenStreams[shareId]);
       state.screenStreams[shareId].getTracks().forEach(t => t.stop());
       delete state.screenStreams[shareId];
       removeVideoFromGrid(shareId);
@@ -2000,6 +2035,7 @@ function stopScreenShare(shareId) {
   } else {
     // Stop all shares
     for (const id in state.screenStreams) {
+      window.rtc.removeStream(state.screenStreams[id]);
       state.screenStreams[id].getTracks().forEach(t => t.stop());
       removeVideoFromGrid(id);
     }
@@ -3050,6 +3086,7 @@ async function saveSettings() {
 
   closeSettings();
   closeModal();
+  window.rtc.setOutputDevice(state.settings.audioOutputDevice);
   showToast('Settings saved', 'success');
   renderMainApp();
   renderChannels();
@@ -5914,7 +5951,7 @@ async function switchServer(serverId) {
   state.currentServerId = serverId;
   state.serverUrl = server.url;
   state.token = server.token;
-  state.user = server.user;
+  state.user = withId(server.user);
   state.channels = [];
   state.messages = [];
   state.currentChannel = null;
@@ -6040,7 +6077,7 @@ async function addServer() {
     state.currentServerId = serverId;
     state.serverUrl = url;
     state.token = data.token;
-    state.user = data.user;
+    state.user = withId(data.user);
 
     closeModal();
     setupSocketConnection();

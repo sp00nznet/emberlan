@@ -7,6 +7,10 @@ All notable changes to Emberlan are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Voice, camera and screen share between users over WebRTC (`client/public/voice-rtc.js`): a
+  mesh with perfect negotiation, so streams can be added or removed mid-call. Deafen and the
+  speaker setting apply. The UI corpus now runs a two-user call with fake devices and checks audio
+  bytes both ways, camera on/off and leaving.
 - On-screen touch gamepad for Game Together (`client/public/touchpad.js`), shown on touch
   devices when no physical controller is connected; a Gamepad API controller hides it. Editable
   layout, size and opacity, saved per device.
@@ -46,6 +50,11 @@ All notable changes to Emberlan are recorded here. The format follows
   `GAME_TOGETHER.md` moved to `docs/game-together.md`.
 
 ### Fixed
+- The UI read `state.user._id` but login returns `id`, so your own DMs showed as the other
+  person's and the Play Together button showed on your own screen share. User objects now carry both.
+- Screen share and camera status updates on the server never ran (Mongoose queries are lazy).
+- The harness picked random ports that could land in Windows-reserved ranges; it now asks the OS.
+- Repository renamed to `sp00nznet/emberlan`.
 - CORS only allowed `CLIENT_URL` and two localhost origins, so the desktop app (`Origin: null`)
   and Android (`https://emberlan.local`) could not call the API. REST and socket.io now allow any
   origin; auth is a Bearer token, never a cookie.

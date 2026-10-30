@@ -1,6 +1,6 @@
 {
-  "pass": 203,
-  "total": 206,
+  "pass": 218,
+  "total": 218,
   "checks": {
     "contract/api calls use state.serverUrl (desktop and Android have no same origin)": true,
     "contract/no function is defined twice in app.js (the later one silently wins)": true,
@@ -100,6 +100,9 @@
     "contract/socket client->server screen:stop": true,
     "contract/socket client->server message:send": true,
     "contract/socket client->server gameTogether:input": true,
+    "contract/socket client->server webrtc:offer": true,
+    "contract/socket client->server webrtc:ice-candidate": true,
+    "contract/socket client->server webrtc:answer": true,
     "contract/socket server->client message:new": true,
     "contract/socket server->client message:updated": true,
     "contract/socket server->client message:deleted": true,
@@ -124,9 +127,12 @@
     "contract/socket server->client twitch:stopped": true,
     "contract/socket server->client dm:new": true,
     "contract/socket server->client dm:publicKey": true,
-    "contract/webrtc client handles webrtc:offer": false,
-    "contract/webrtc client handles webrtc:answer": false,
-    "contract/webrtc client handles webrtc:ice-candidate": false,
+    "contract/socket server->client webrtc:offer": true,
+    "contract/socket server->client webrtc:answer": true,
+    "contract/socket server->client webrtc:ice-candidate": true,
+    "contract/webrtc client handles webrtc:offer": true,
+    "contract/webrtc client handles webrtc:answer": true,
+    "contract/webrtc client handles webrtc:ice-candidate": true,
     "parity/bridge getSettings": true,
     "parity/bridge saveToken": true,
     "parity/bridge onToggleMute": true,
@@ -207,6 +213,12 @@
     "ui/touch pad appears for Game Together when no controller is connected": true,
     "ui/touch pad: two fingers press A and push the left stick at once": true,
     "ui/touch pad: layout edits are saved": true,
+    "ui/voice: two users in a voice channel get a connected WebRTC call": true,
+    "ui/voice: audio from each user reaches the other": true,
+    "ui/voice: deafen silences what you hear": true,
+    "ui/video: turning on a camera shows it to the other user": true,
+    "ui/video: turning the camera off removes it for the other user": true,
+    "ui/voice: leaving ends the call for the other user": true,
     "ui/no JavaScript errors during the flow": true
   }
 }

@@ -33,8 +33,9 @@ Endpoints are in [api.md](api.md); intent is in [ROADMAP.md](../ROADMAP.md).
 - The client captures the microphone, camera and screen locally (`getUserMedia`,
   `getDisplayMedia`, or the Electron source picker on desktop), and the settings have mic and
   camera tests.
-- **No audio or video reaches other users yet.** The client does not do WebRTC signaling. See the
-  README Status.
+- Mic, camera and screen shares reach everyone else in the voice channel over WebRTC, peer to
+  peer (`client/public/voice-rtc.js`). Deafen silences what you hear; the speaker choice in
+  Settings > Voice applies to voice audio.
 - Touch devices: on-screen gamepad for Game Together ([game-together.md](game-together.md)).
 - Desktop only: push-to-talk and mute/deafen hotkeys, system tray, taskbar flashing. Android has no
   screen-source picker.
@@ -50,7 +51,7 @@ Endpoints are in [api.md](api.md); intent is in [ROADMAP.md](../ROADMAP.md).
 - Media bots, configured in Settings > Media Bots: YouTube, Plex, Emby, Jellyfin, IPTV, Twitch and
   a shared Chrome browser, plus Game Together. Details in [bots.md](bots.md) and
   [game-together.md](game-together.md). Bot video plays through the server's stream proxy
-  (`/api/stream/proxy`); there is no WebRTC media for it either.
+  (`/api/stream/proxy`); it is not sent over the voice call.
 - Federation: view this server's info, request and approve links to other servers, analyze
   channel conflicts. See [federation.md](federation.md).
 

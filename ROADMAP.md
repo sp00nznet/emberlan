@@ -4,17 +4,14 @@ Current state is in the [README](README.md#status). This file is intent, not fac
 
 ## Next
 
-1. **WebRTC media for voice, video and screen share.** The server already relays
-   `webrtc:offer`, `webrtc:answer` and `webrtc:ice-candidate`; the client needs to create peer
-   connections, send and handle those events, and attach the streams. Done when the three
-   `contract/webrtc` conformance checks pass and two clients hear each other.
+1. **TURN for voice behind strict NAT.** Voice is STUN-only; add a TURN server (coturn) setting
+   and pass it to `ICE_SERVERS` in `client/public/voice-rtc.js`.
 2. **Signed Android release builds.** The release workflow attaches a debug APK; a release-signed
    APK needs a keystore stored as a repository secret.
 3. **Tighten the CSP:** move the UI's ~190 inline `onclick` handlers to `addEventListener`, then
    drop `script-src-attr 'unsafe-inline'` from `server/index.js`.
 4. **Tag v1.1.0** so the release workflow publishes the first Windows installer and APK.
-5. **Rename the GitHub repository** from `sp00nznet/emberlan` to Emberlan and update the links.
-6. A working change-password form in Settings > Account. The server endpoint
+5. A working change-password form in Settings > Account. The server endpoint
    `PUT /api/auth/password` exists; the button only shows a toast.
 
 - **Channel history can overwrite a just-sent message.** `loadMessages` replaces the list when
@@ -22,6 +19,9 @@ Current state is in the [README](README.md#status). This file is intent, not fac
   Merge instead of replace. (The harness waits for history to dodge it; a real user rarely hits it.)
 
 ## Deferred
+
+- An SFU (mediasoup, LiveKit) for voice rooms larger than about 8 people; the mesh sends one
+  copy of each stream to every listener.
 
 Nothing beyond the list above.
 

@@ -19,14 +19,14 @@ data; `F7LANS_*` environment variables still work as fallbacks for `EMBERLAN_*`.
 
 ## Status
 
-**Version 1.0.0, alpha.** Usable for text chat among friends; not ready for anything you depend on.
+**Version 1.0.0, alpha.** Usable among friends; not ready for anything you depend on.
 
-- Works today: accounts (local and Google sign-in), text channels, E2E encrypted DMs, joining
-  voice channels (presence only), admin settings, media bot configuration, federation setup.
-- **Voice, video and screen share carry no audio or video yet.** The server relays WebRTC
-  signaling (`webrtc:offer`, `webrtc:answer`, `webrtc:ice-candidate`), but the client never sends
-  or handles those events, so joining a voice channel shows you as present and nothing else. The
-  conformance harness tracks this as three failing checks.
+- Works today: accounts (local and Google sign-in), text channels, E2E encrypted DMs, voice
+  channels with audio, camera video and screen share (WebRTC, peer to peer), admin settings,
+  media bot configuration, federation setup.
+- Voice is a full mesh: each user sends one copy to every other user, so it suits LAN-party sizes
+  (around 8 people). It uses STUN only: it works on a LAN, over Tailscale and on most home
+  networks, but users behind strict NAT need a TURN server (see [ROADMAP.md](ROADMAP.md)).
 - Clients: web, Windows desktop (Electron), Android (Capacitor). macOS, Linux desktop and iOS
   are not supported.
 - Downloads: a `v*` tag builds the Windows installer and an Android debug APK and attaches them to a
@@ -154,7 +154,7 @@ reach a plain-HTTP server on your LAN.
 
 ## Conformance
 
-<!-- conformance -->**203/206** checks passing<!-- /conformance -->
+<!-- conformance -->**218/218** checks passing<!-- /conformance -->
 
 ```bash
 npm install
@@ -169,7 +169,7 @@ and that the desktop and Android bridges expose the same functions. The live cor
 server against an in-memory MongoDB and drives login, chat, DMs and voice join. The UI corpus
 drives the real UI in headless Chrome or Edge (set `CHROME_PATH` if it is not found). It exits 1
 when a check that passed in the baseline fails, and runs in CI on every push and PR to `main`.
-The three failures are the WebRTC signaling checks. Details: [docs/conformance.md](docs/conformance.md).
+It includes two users in a voice call: audio both ways, camera on and off, deafen, leave. Details: [docs/conformance.md](docs/conformance.md).
 
 ## License
 

@@ -627,23 +627,26 @@ const handleUserConnection = async (io, socket) => {
 
   // ===== WebRTC Signaling =====
   socket.on('webrtc:offer', (data) => {
-    const { targetUserId, offer } = data;
+    const { targetUserId, offer, meta } = data;
+    // meta: { [streamId]: { kind: 'camera' | 'screen', label } } so the receiver can label video tiles.
     const targetSocketId = connectedUsers.get(targetUserId);
     if (targetSocketId) {
       io.to(targetSocketId).emit('webrtc:offer', {
         fromUserId: user._id,
-        offer
+        offer,
+        meta
       });
     }
   });
 
   socket.on('webrtc:answer', (data) => {
-    const { targetUserId, answer } = data;
+    const { targetUserId, answer, meta } = data;
     const targetSocketId = connectedUsers.get(targetUserId);
     if (targetSocketId) {
       io.to(targetSocketId).emit('webrtc:answer', {
         fromUserId: user._id,
-        answer
+        answer,
+        meta
       });
     }
   });
@@ -665,7 +668,7 @@ const handleUserConnection = async (io, socket) => {
       Channel.updateOne(
         { _id: socket.voiceChannel, 'currentUsers.user': user._id },
         { $set: { 'currentUsers.$.isStreaming': true } }
-      );
+      ).exec().catch((e) => console.error('voice state update failed:', e.message)); // queries are lazy: exec() makes it run
 
       io.to(`voice:${socket.voiceChannel}`).emit('screen:started', {
         userId: user._id
@@ -678,7 +681,7 @@ const handleUserConnection = async (io, socket) => {
       Channel.updateOne(
         { _id: socket.voiceChannel, 'currentUsers.user': user._id },
         { $set: { 'currentUsers.$.isStreaming': false } }
-      );
+      ).exec().catch((e) => console.error('voice state update failed:', e.message)); // queries are lazy: exec() makes it run
 
       io.to(`voice:${socket.voiceChannel}`).emit('screen:stopped', {
         userId: user._id
@@ -692,7 +695,7 @@ const handleUserConnection = async (io, socket) => {
       Channel.updateOne(
         { _id: socket.voiceChannel, 'currentUsers.user': user._id },
         { $set: { 'currentUsers.$.isCameraOn': isOn } }
-      );
+      ).exec().catch((e) => console.error('voice state update failed:', e.message)); // queries are lazy: exec() makes it run
 
       io.to(`voice:${socket.voiceChannel}`).emit('camera:toggled', {
         userId: user._id,

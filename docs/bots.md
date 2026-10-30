@@ -36,7 +36,7 @@ Documentation for the media bots configured in Settings > Media Bots.
 
 Settings > Media Bots configures these bots. The server also has routes for an image search bot and a Star Citizen bot that the UI no longer exposes.
 
-Bots do not send media over voice (there is no WebRTC media yet). When a bot starts playing, the
+Bots do not send media over the voice call. When a bot starts playing, the
 server tells everyone in the channel (`youtube:playing`, `media:playing`, `iptv:playing`,
 `twitch:started`) and each client opens the stream itself in the video grid, directly or through
 the server's `/api/stream/proxy`.

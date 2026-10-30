@@ -37,7 +37,7 @@ it with ×; size and opacity sliders and **Reset** sit beside it. The layout is 
   the machine hosting the Emberlan server (for example the desktop app's embedded server). In
   Docker, `docker-compose.yml` passes `/dev/uinput` into the server container for this reason.
 
-Making it real needs a ViGEm binding on Windows, uinput writes on Linux, and WebRTC screen share.
+Making it real needs a ViGEm binding on Windows, uinput writes on Linux, (the host's screen share already reaches players over WebRTC).
 
 ## Admin
 
