@@ -8,8 +8,9 @@
     "cap:add:android": "npx cap add android",
     "cap:sync": "npx cap sync",
     "cap:open:android": "npx cap open android",
-    "build:android": "npm run copy-client && npx cap sync android && cd android && gradlew assembleDebug",
-    "run:android": "npx cap run android"
+    "build:android": "npm run copy-client && npx cap sync android && npm run gradle",
+    "run:android": "npx cap run android",
+    "gradle": "node -e \"const w=process.platform===`win32`;require(`child_process`).execFileSync(require(`path`).resolve(`android`,w?`gradlew.bat`:`gradlew`),[`assembleDebug`],{cwd:`android`,stdio:`inherit`,shell:w})\""
   },
   "dependencies": {
     "@capacitor/android": "^7.0.0",
