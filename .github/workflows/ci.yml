@@ -74,4 +74,5 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           awk -v v="$v" '$0 ~ "^## \[" v "\]" {p=1; next} /^## \[/ {p=0} p' CHANGELOG.md > notes.md
           gh release create "$GITHUB_REF_NAME" dist/*/* --title "Emberlan $GITHUB_REF_NAME" --notes-file notes.md
-        env: { GH_TOKEN: ${{ github.token }} }
+        env:
+          GH_TOKEN: ${{ github.token }}
